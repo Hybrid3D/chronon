@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronon-vcs"
+version = "0.1.0"
+description = "Local, document-oriented immutable history indexed by time"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "jsonschema>=4.23",
+  "mcp>=1.8,<2",
+  "PyYAML>=6.0",
+  "typer>=0.15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3"]
+
+[project.scripts]
+chronon = "chronon.cli:main"
+chronon-ls = "chronon.cli:ls_main"
+chronon-cat = "chronon.cli:cat_main"
+chronon-write = "chronon.cli:write_main"
+chronon-commit = "chronon.cli:commit_main"
+chronon-mcp = "chronon.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff.lint]
+ignore = ["B008"] # Typer declares CLI metadata in function defaults by design.

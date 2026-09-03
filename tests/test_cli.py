@@ -1,0 +1,315 @@
+import json
+import re
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from chronon.cli import app, cat_app, commit_app, ls_app, write_app
+
+runner = CliRunner()
+
+
+def _working_revision(resource: str) -> str:
+    result = runner.invoke(cat_app, [resource, "--json"])
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)["working_revision"]
+
+
+def test_cli_end_to_end(tmp_path: Path, monkeypatch) -> None:
+    result = runner.invoke(app, ["init", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    (tmp_path / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert runner.invoke(app, ["add", "docs.yml"]).exit_code == 0
+    committed = runner.invoke(
+        app,
+        [
+            "commit",
+            "docs.yml",
+            "-m",
+            "initial",
+            "--if-match",
+            _working_revision("docs.yml"),
+        ],
+    )
+    assert committed.exit_code == 0, committed.output
+    changed = runner.invoke(
+        app,
+        ["set", "docs.yml", "--path", "value", "--value", "2", "--type", "int"],
+    )
+    assert changed.exit_code == 0, changed.output
+
+    diff = runner.invoke(app, ["diff", "docs.yml", "--json"])
+    assert diff.exit_code == 0, diff.output
+    assert json.loads(diff.output)["changes"][0]["new"] == 2
+
+    logged = runner.invoke(app, ["log", "docs.yml", "--json"])
+    assert json.loads(logged.output)["commits"][0]["message"] == "initial"
+
+
+def test_cli_auto_init_fails_clearly(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["init", str(tmp_path), "--mode", "auto", "--json"])
+    assert result.exit_code == 4
+    assert json.loads(result.output)["error"] == "not_implemented"
+
+
+def test_clean_text_diff_says_no_changes(tmp_path: Path, monkeypatch) -> None:
+    assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
+    (tmp_path / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["add", "notes.md"]).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "commit",
+                "notes.md",
+                "-m",
+                "initial",
+                "--if-match",
+                _working_revision("notes.md"),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    result = runner.invoke(app, ["diff", "notes.md"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "No changes"
+
+    status = runner.invoke(app, ["status", "notes.md"])
+    assert status.exit_code == 0
+    assert "commits=1" in status.output
+    assert "last=" in status.output
+
+
+def test_shell_style_ls_and_cat_commands(tmp_path: Path, monkeypatch) -> None:
+    assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
+    (tmp_path / "empty.txt").write_text("", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("first\nsecond\n", encoding="utf-8")
+    (tmp_path / "private.txt").write_text("not tracked\n", encoding="utf-8")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "tracked.txt").write_text("nested\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert (
+        runner.invoke(
+            app, ["add", "empty.txt", "notes.txt", "nested/tracked.txt"]
+        ).exit_code
+        == 0
+    )
+
+    listed = runner.invoke(ls_app, ["."])
+    assert listed.exit_code == 0, listed.output
+    assert listed.output == "empty.txt\nnested/\nnotes.txt\n"
+
+    nested = runner.invoke(ls_app, ["nested", "--json"])
+    assert nested.exit_code == 0, nested.output
+    assert json.loads(nested.output)["entries"] == [
+        {"name": "tracked.txt", "path": "nested/tracked.txt", "type": "file"}
+    ]
+
+    content = runner.invoke(cat_app, ["notes.txt"])
+    assert content.exit_code == 0, content.output
+    assert content.output == "first\nsecond\n"
+    assert runner.invoke(cat_app, ["empty.txt"]).output == ""
+
+    assert (
+        runner.invoke(
+            app,
+            [
+                "commit",
+                "notes.txt",
+                "-m",
+                "initial",
+                "--if-match",
+                _working_revision("notes.txt"),
+            ],
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(app, ["write", "notes.txt", "--content", "changed\n"]).exit_code
+        == 0
+    )
+    historical = runner.invoke(cat_app, ["notes.txt", "--at", "latest"])
+    assert historical.exit_code == 0, historical.output
+    assert historical.output == "first\nsecond\n"
+
+
+def test_shell_style_commands_resolve_paths_from_nested_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "notes.txt").write_text("nested content\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["add", "nested/notes.txt"]).exit_code == 0
+
+    monkeypatch.chdir(nested)
+    assert runner.invoke(ls_app, ["."]).output == "notes.txt\n"
+    assert runner.invoke(cat_app, ["notes.txt"]).output == "nested content\n"
+
+
+def test_shell_style_commands_use_explicit_vault_outside_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    (vault / "notes.txt").write_text("vault content\n", encoding="utf-8")
+    monkeypatch.chdir(vault)
+    assert runner.invoke(app, ["add", "notes.txt"]).exit_code == 0
+
+    monkeypatch.chdir(outside)
+    listed = runner.invoke(ls_app, [str(vault)])
+    assert listed.exit_code == 0, listed.output
+    assert listed.output == "notes.txt\n"
+    content = runner.invoke(cat_app, [str(vault / "notes.txt")])
+    assert content.exit_code == 0, content.output
+    assert content.output == "vault content\n"
+
+
+def test_chronon_write_creates_and_updates_from_outside_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    monkeypatch.chdir(outside)
+    resource = vault / "nested" / "notes.txt"
+
+    created = runner.invoke(
+        write_app,
+        [str(resource), "--stdin", "--scratch", "--json"],
+        input="created through chronon\n",
+    )
+    assert created.exit_code == 0, created.output
+    created_result = json.loads(created.output)
+    assert created_result["created"] is True
+    assert runner.invoke(cat_app, [str(resource)]).output == "created through chronon\n"
+    assert runner.invoke(ls_app, [str(vault / "nested")]).output == "notes.txt\n"
+    assert (
+        runner.invoke(ls_app, [str(vault / "nested"), "-l"]).output
+        == "scratch     0  -                 notes.txt\n"
+    )
+
+    updated = runner.invoke(
+        write_app,
+        [
+            str(resource),
+            "--content",
+            "updated\n",
+            "-m",
+            "update notes",
+            "--if-match",
+            created_result["working_revision"],
+            "--json",
+        ],
+    )
+    assert updated.exit_code == 0, updated.output
+    result = json.loads(updated.output)
+    assert result["created"] is False
+    assert result["committed"] is True
+    assert runner.invoke(cat_app, [str(resource)]).output == "updated\n"
+    # timestamp is wall-clock at commit time, so match its shape, not its value
+    assert re.fullmatch(
+        r"clean       1  \d{4}-\d{2}-\d{2} \d{2}:\d{2}  notes\.txt\n",
+        runner.invoke(ls_app, [str(vault / "nested"), "-l"]).output,
+    )
+
+    stale = runner.invoke(
+        write_app,
+        [
+            str(resource),
+            "--content",
+            "stale overwrite\n",
+            "--scratch",
+            "--if-match",
+            created_result["working_revision"],
+            "--json",
+        ],
+    )
+    assert stale.exit_code == 7
+    assert json.loads(stale.output)["error"] == "revision_conflict"
+    assert runner.invoke(cat_app, [str(resource)]).output == "updated\n"
+
+
+def test_chronon_write_refuses_ambiguous_or_untracked_existing_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    vault = tmp_path / "vault"
+    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    existing = vault / "existing.txt"
+    existing.write_text("original\n", encoding="utf-8")
+    monkeypatch.chdir(vault)
+
+    ambiguous = runner.invoke(
+        write_app,
+        [str(vault / "new.txt"), "--content", "value", "--stdin"],
+        input="other",
+    )
+    assert ambiguous.exit_code == 4
+
+    missing_mode = runner.invoke(
+        write_app, [str(vault / "new.txt"), "--content", "value"]
+    )
+    assert missing_mode.exit_code == 4
+    assert "choose exactly one of --scratch or --message" in missing_mode.output
+
+    ambiguous_mode = runner.invoke(
+        write_app,
+        [
+            str(vault / "new.txt"),
+            "--content",
+            "value",
+            "--scratch",
+            "-m",
+            "also commit",
+        ],
+    )
+    assert ambiguous_mode.exit_code == 4
+
+    overwrite = runner.invoke(
+        write_app, [str(existing), "--content", "replacement\n", "--scratch"]
+    )
+    assert overwrite.exit_code == 3
+    assert "refusing to overwrite an untracked path" in overwrite.output
+    assert existing.read_text(encoding="utf-8") == "original\n"
+
+
+def test_chronon_commit_commits_exact_scratch_from_outside_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    vault = tmp_path / "vault"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    monkeypatch.chdir(outside)
+    resource = vault / "draft.txt"
+
+    scratch = runner.invoke(
+        write_app,
+        [str(resource), "--content", "draft\n", "--scratch", "--json"],
+    )
+    scratch_revision = json.loads(scratch.output)["working_revision"]
+    committed = runner.invoke(
+        commit_app,
+        [
+            str(resource),
+            "-m",
+            "finish draft",
+            "--if-match",
+            scratch_revision,
+            "--json",
+        ],
+    )
+
+    assert committed.exit_code == 0, committed.output
+    result = json.loads(committed.output)
+    assert result["committed"] is True
+    assert result["state"] == "clean"
+    assert runner.invoke(cat_app, [str(resource), "--at", "latest"]).output == "draft\n"
