@@ -183,11 +183,12 @@ not have to be the current directory:
 ```bash
 cd "$HOME/work/client-app"
 
-# Initialize a separate directory, register it as "knowledge", and create
-# AI guidance there, without leaving client-app.
+# Initialize a separate directory and register it as "knowledge".
 chronon init "$HOME/Documents/team-knowledge" \
-  --register knowledge \
-  --agents-md
+  --register knowledge
+
+# Create vault-specific AI guidance in the current external workspace.
+chronon agents-md --vault knowledge
 
 chronon list-vaults
 chronon --vault knowledge status
@@ -373,7 +374,7 @@ Run `chronon COMMAND --help` for every option.
 
 | Command | Purpose |
 |---|---|
-| `init [DIR]` | Initialize a manual repository; optionally register a vault and generate agent guidance |
+| `init [DIR]` | Initialize a manual repository and optionally register a vault |
 | `add FILE...` | Start tracking existing files |
 | `status [FILE]` | Show one or all states: `untracked`, `clean`, `dirty`, `foreign`, `missing` |
 | `list` | List all tracked resources and states |
@@ -393,7 +394,7 @@ Run `chronon COMMAND --help` for every option.
 | `accept FILE` | Accept a foreign edit as the current dirty baseline |
 | `schema-register FILE` | Attach a JSON Schema |
 | `validate FILE` | Validate current content |
-| `agents-md [NAME]` | Create or refresh AI CLI guidance |
+| `agents-md [PATH]` | Create or refresh CHRONON.md in an external working directory |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
 
 Use `chronon --version` (or `chronon -V`) to print the installed version. Add
@@ -405,19 +406,37 @@ exists at a requested revision.
 
 ## Using Chronon with an AI through `CHRONON.md`
 
-Generate the file during initialization or later:
+`chronon agents-md` writes `CHRONON.md` in the current directory. The current
+directory does not need to be a vault; normally it is the project or agent
+workspace from which a separate vault will be used:
 
 ```bash
-chronon init "$HOME/Documents/team-knowledge" \
-  --register knowledge \
-  --agents-md
-
-# Equivalent later command:
-chronon --vault knowledge agents-md
+cd "$HOME/work/client-app"
+chronon agents-md
 ```
 
-The generated section explains safe reads, revision preconditions, commits,
-structured edits, and vault selection. It is bounded by these markers:
+Pass a directory to write `CHRONON.md` there instead:
+
+```bash
+chronon agents-md "$HOME/work/client-app"
+```
+
+Without a vault option, the generated file contains general guidance explaining
+how an agent should select a vault. To specialize it for one registered vault,
+pass `--vault` to the `agents-md` command:
+
+```bash
+chronon agents-md --vault knowledge
+chronon agents-md "$HOME/work/client-app" --vault knowledge
+```
+
+The specialized template names `knowledge` as the fixed target, adds
+`chronon --vault knowledge` to every relevant command, and tells the agent to
+list, read, and write managed files only through Chronon. It therefore remains
+useful even though the generated file lives outside the vault.
+
+The generated section also explains scratch safety, revision preconditions,
+commits, and structured edits. It is bounded by these markers:
 
 ```html
 <!-- chronon:agents-md:begin -->
@@ -435,16 +454,15 @@ in the file. You can prepend project-specific instructions, for example:
 - Use concise commit messages that describe the content change.
 ```
 
-Whether an AI reads `CHRONON.md` automatically depends on the client. Start the
-agent in the vault directory, attach the file, or name its absolute path in the
-prompt. A complete prompt from another directory can be:
+Whether an AI reads `CHRONON.md` automatically depends on the client. Generate
+it in the agent's working directory, attach it, or name its absolute path in the
+prompt. A complete prompt can be:
 
 ```text
-First read ~/Documents/team-knowledge/CHRONON.md and follow it. Work in the
-registered Chronon vault named "knowledge". Inspect architecture.yml, update the
-web port to 9090, validate it, review the diff, and commit the change with a
-concise message. If a decision is not material, use your recommended default and
-record the assumption in decisions.md.
+First read CHRONON.md and follow it. Inspect architecture.yml, update the web
+port to 9090, validate it, review the diff, and commit the change with a concise
+message. If a decision is not material, use your recommended default and record
+the assumption in decisions.md.
 ```
 
 A well-behaved CLI agent should follow this sequence:
@@ -455,14 +473,6 @@ A well-behaved CLI agent should follow this sequence:
 4. Inspect `diff` and `validate`.
 5. Commit with a meaningful message; never leave important work only as scratch.
 6. On `revision_conflict`, re-read and reconcile instead of retrying blindly.
-
-For clients that automatically read another filename, write the same managed
-section there:
-
-```bash
-chronon --vault knowledge agents-md AGENTS.md
-chronon --vault knowledge agents-md CLAUDE.md
-```
 
 ## Using Chronon with an AI through MCP
 

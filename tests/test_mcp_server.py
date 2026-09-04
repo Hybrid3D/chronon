@@ -64,12 +64,11 @@ def test_mcp_can_initialize_and_create_a_resource(tmp_path: Path, monkeypatch) -
             "initialize_repository",
             {
                 "directory": str(root),
-                "create_agent_instructions": True,
             },
         )
     )
     assert initialized["created"] is True
-    assert (root / "CHRONON.md").is_file()
+    assert not (root / "CHRONON.md").exists()
 
     monkeypatch.chdir(root)
     _, created = asyncio.run(
@@ -95,6 +94,6 @@ def test_mcp_agent_instructions_error_is_structured(
     init_repository(tmp_path)
     monkeypatch.chdir(tmp_path)
     _, result = asyncio.run(
-        mcp.call_tool("write_agent_instructions", {"filename": "nested/AGENTS.md"})
+        mcp.call_tool("write_agent_instructions", {"directory": "missing-directory"})
     )
     assert result["error"] == "invalid_argument"

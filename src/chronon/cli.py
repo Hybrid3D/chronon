@@ -16,6 +16,7 @@ from chronon.api.operations import (
     init_repository,
     list_vaults,
     remove_vault,
+    write_agent_instructions,
 )
 from chronon.core.errors import ChrononError, InvalidArgument
 
@@ -104,9 +105,6 @@ def _emit(value: Any, json_output: bool = False) -> None:
     if {"root", "mode", "created"} <= value.keys():
         verb = "Initialized" if value["created"] else "Already initialized"
         typer.echo(f"{verb} {value['root']} ({value['mode']})")
-        agents_md = value.get("agents_md")
-        if agents_md:
-            _echo_agents_md_result(agents_md)
         vault = value.get("vault")
         if vault:
             typer.echo(f"Registered vault {vault['name']} -> {vault['path']}")
@@ -257,27 +255,10 @@ def init_command(
         "--register",
         help="Also register this directory as a named vault (see 'chronon add-vault').",
     ),
-    agents_md: bool = typer.Option(
-        False,
-        "--agents-md",
-        help=(
-            "Also write/update a Chronon usage section in this directory's "
-            "CHRONON.md (see 'chronon agents-md')."
-        ),
-    ),
-    agents_md_file: str | None = typer.Option(
-        None,
-        "--agents-md-file",
-        metavar="NAME",
-        help=(
-            "Write/update NAME instead of CHRONON.md (e.g. AGENTS.md); "
-            "implies --agents-md."
-        ),
-    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: init_repository(directory, mode, register, agents_md_file or agents_md),
+        lambda: init_repository(directory, mode, register),
         json_output,
     )
 
@@ -683,25 +664,33 @@ def schema_register(
 
 @app.command("agents-md")
 def agents_md_command(
-    filename: str = typer.Argument(
-        "CHRONON.md",
-        help="Doc file to write at the repo root (e.g. AGENTS.md, CLAUDE.md).",
+    directory: Path = typer.Argument(
+        Path("."),
+        metavar="[PATH]",
+        help="Directory in which to create or refresh CHRONON.md.",
+    ),
+    vault: str | None = typer.Option(
+        None,
+        "--vault",
+        "-v",
+        help="Customize the guidance for this registered vault.",
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Write or refresh this repository's agents doc with chronon usage.
+    """Write or refresh external AI guidance for using Chronon.
 
-    Writes CHRONON.md by default; pass another name (e.g. `chronon agents-md
-    AGENTS.md`) to target that file instead.
-
-    Meant as a lightweight substitute for MCP: an agent that reads this file
-    (Claude Code and others do, automatically) learns the chronon CLI from
-    plain Bash, without an MCP server having to be configured. Safe to re-run
-    — only the marked chronon section is touched, everything else you or
-    another tool wrote into the file is left alone.
+    The destination defaults to the current directory and does not need to be
+    inside a vault. With --vault, every example is specialized for that named
+    vault. Safe to re-run: only the marked Chronon section is updated.
     """
+
+    selected_vault = vault or _active_vault()
+
+    def generate() -> dict[str, Any]:
+        return write_agent_instructions(directory, vault=selected_vault)
+
     _run(
-        lambda: ChrononRepository(vault=_active_vault()).write_agents_md(filename),
+        generate,
         json_output,
     )
 

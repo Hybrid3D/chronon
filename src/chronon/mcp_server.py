@@ -10,6 +10,7 @@ from chronon.api.operations import add_vault as _add_vault
 from chronon.api.operations import init_repository as _init_repository
 from chronon.api.operations import list_vaults as _list_vaults
 from chronon.api.operations import remove_vault as _remove_vault
+from chronon.api.operations import write_agent_instructions as _write_agent_instructions
 from chronon.core.errors import ChrononError
 
 mcp = FastMCP(
@@ -53,17 +54,13 @@ def remove_vault(name: str) -> dict[str, Any]:
 def initialize_repository(
     directory: str = ".",
     register_vault: str | None = None,
-    create_agent_instructions: bool = False,
-    agent_instructions_filename: str = "CHRONON.md",
 ) -> dict[str, Any]:
-    """Initialize a manual-mode repository and optionally register/write guidance."""
-    agents_md = agent_instructions_filename if create_agent_instructions else False
+    """Initialize a manual-mode repository and optionally register it as a vault."""
     return _safe(
         lambda: _init_repository(
             directory,
             "manual",
             register_vault=register_vault,
-            agents_md=agents_md,
         )
     )
 
@@ -354,11 +351,11 @@ def register_schema(
 
 @mcp.tool()
 def write_agent_instructions(
-    filename: str = "CHRONON.md",
+    directory: str = ".",
     vault: str | None = None,
 ) -> dict[str, Any]:
-    """Create or refresh the marked Chronon section in an agent guidance file."""
-    return _safe(lambda: ChrononRepository(vault=vault).write_agents_md(filename))
+    """Write CHRONON.md in an external directory, optionally for one vault."""
+    return _safe(lambda: _write_agent_instructions(directory, vault=vault))
 
 
 def main() -> None:

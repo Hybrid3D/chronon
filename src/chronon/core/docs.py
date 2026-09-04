@@ -1,12 +1,14 @@
-"""Generate/refresh the Chronon usage section of a repository's agents doc.
+"""Generate/refresh Chronon guidance in an external agent working directory.
 
-The default file is ``CHRONON.md`` at the repository root, but the caller can
-point this at any name (``AGENTS.md``, ``CLAUDE.md``, …) — several coding
-agents (Claude Code included) read such a file automatically. Writing
-chronon's CLI usage there lets an agent learn how to use chronon from plain
-Bash — no MCP server has to be registered for the agent to pick it up. This
-is meant as a lightweight substitute for MCP, not a replacement for it; an
-agent that does have the MCP server configured just ignores it.
+The default file is ``CHRONON.md`` in a caller-selected directory. That
+directory need not be a Chronon vault: in the common case it is the external
+workspace from which an agent accesses a registered vault. Callers that embed
+the section in another guidance file may still select a different filename.
+
+There are two variants. The generic section explains how to select a vault;
+the vault-specific section fixes one registered vault name and puts that
+selector into every example. Both teach an agent to use Chronon from plain
+Bash, without requiring an MCP server.
 
 The section is delimited by HTML comment markers so re-running the command
 (e.g. after a chronon upgrade) updates only chronon's own block and leaves
@@ -26,13 +28,52 @@ END_MARKER = "<!-- chronon:agents-md:end -->"
 DEFAULT_AGENTS_MD = "CHRONON.md"
 
 
-def render_section() -> str:
-    return f"""{BEGIN_MARKER}
-## Chronon (per-file version history)
+def _render_section(vault: str | None) -> str:
+    command = f"chronon --vault {vault}" if vault else "chronon"
+    heading = f"Chronon vault `{vault}`" if vault else "Chronon"
+    if vault:
+        context = f"""This workspace uses the registered Chronon vault **`{vault}`**. All paths
+below are relative to that vault's root, regardless of the current directory.
+Always keep `--vault {vault}` before the subcommand.
 
-This repository tracks some files with **chronon**: a local, per-document,
-time-indexed history — independent of git's per-repository commit history.
-It's a plain CLI; no MCP server needs to be configured to use it.
+Do not inspect or modify that vault with direct filesystem tools. Use
+`{command} ls`, `{command} read`, and `{command} write` so Chronon can enforce
+tracking, scratch safety, revision preconditions, and history."""
+        selection = f"""### Selected vault
+
+The vault is already selected for this workspace:
+
+```bash
+{command} ls .
+{command} status
+```
+
+Do not substitute another vault unless the user explicitly changes the target."""
+    else:
+        context = """This workspace may use documents managed by **chronon**: a local,
+per-document, time-indexed history independent of git. When the user identifies
+a named vault, access its managed files through Chronon rather than direct
+filesystem tools. Use `chronon ls`, `read`, and `write` so Chronon can enforce
+tracking, scratch safety, revision preconditions, and history."""
+        selection = """### Selecting a vault
+
+If the user supplies a registered vault name, put the global selector before
+every subcommand. This works from any directory:
+
+```bash
+chronon --vault <vault> ls .
+chronon --vault <vault> status
+```
+
+Without `--vault`/`-v`, Chronon discovers a vault from the current directory.
+Do not guess which named vault to use."""
+
+    return f"""{BEGIN_MARKER}
+## {heading} (per-file version history)
+
+{context}
+
+Chronon is a plain CLI; no MCP server needs to be configured to use it.
 
 > **IMPORTANT — chronon is plumbing. Run it, don't talk about it.**
 > Chronon is only *how* you read and save tracked files, the same way `ls`
@@ -43,13 +84,13 @@ It's a plain CLI; no MCP server needs to be configured to use it.
 >
 > - **Never narrate chronon commands** in your replies to the user or in a
 >   task summary. "아파트/매매정보.md의 매도호가를 갱신했습니다" — yes.
->   "`chronon --vault investment write ...`를 실행했습니다" — no.
+>   "`{command} write ...`를 실행했습니다" — no.
 > - **Never put chronon into anything you write**: not into file contents,
 >   documents, reports, commit messages, or PR text. A sentence like
 >   "갱신은 chronon을 통해서만 (`chronon write ...`)" must never appear in a
 >   deliverable. The reader must not need to know chronon exists.
-> - Describing *what you looked at* in plain terms is fine — "investment
->   vault의 README.md를 확인했습니다" is OK; naming the chronon command you
+> - Describing *what you looked at* in plain terms is fine — "vault의
+>   README.md를 확인했습니다" is OK; naming the chronon command you
 >   used to read it is not.
 > - Chronon commands and their `--json` output are for you to act on, then
 >   discard — like shell output, not like results to hand over.
@@ -69,38 +110,30 @@ It's a plain CLI; no MCP server needs to be configured to use it.
   `working_revision`, and pass it back as `--if-match`. On `revision_conflict`,
   re-read and reconcile; never retry a stale overwrite blindly.
 
-Add `--json` to any command for machine-readable output.
+Prefer `--json` when you need structured state or a `working_revision` token.
 
-### Selecting a named vault
-
-If the repository is registered as a named vault (`chronon list-vaults`), select
-it with the global option **before** the command. This works from any directory:
-
-```bash
-chronon --vault myvault status <path>
-chronon -v myvault diff <path> --from latest~3
-```
-
-Without `--vault`/`-v`, chronon finds the repository from the current directory.
+{selection}
 
 | Task | Command |
 |---|---|
-| Start tracking a file | `chronon add <path>` |
-| Rename a tracked file (keeps history) | `chronon mv <old> <new>` |
-| Copy a tracked file to a new path | `chronon cp <src> <dst>` |
-| Replace content + commit in one step | `chronon write <path> --stdin --message "..."` |
-| Change one value + commit | `chronon set <path> --path "a.b.c" --value X --message "..."` |
-| Commit an already-saved edit | `chronon commit <path> --message "..." --if-match <working_revision>` |
-| Current state | `chronon status <path>` (untracked / clean / dirty / foreign / missing) |
-| Diff against a point in time | `chronon diff <path> --from 2026-08-01 --to working` |
-| Diff against N commits ago | `chronon diff <path> --from latest~3` |
-| Read past content | `chronon show <path> <rev>` |
-| History of one value | `chronon path-history <path> --path a.b.c` |
-| Full commit log | `chronon log <path>` |
-| Discard uncommitted edits | `chronon discard <path>` |
-| Restore an old revision (as a new commit) | `chronon rollback <path> <rev> --message "..."` |
-| Commit an edit made by a normal editor | get `working_revision` from `chronon status <path> --json`, then `chronon commit <path> --message "..." --if-match <working_revision>` |
-| Keep editing an externally changed file through Chronon | get `working_revision`, then `chronon accept <path> --if-match <working_revision>`; read again before the next write |
+| List managed files | `{command} ls [directory]` |
+| Read current content | `{command} read <path>` |
+| Start tracking a file | `{command} add <path>` |
+| Rename a tracked file (keeps history) | `{command} mv <old> <new>` |
+| Copy a tracked file to a new path | `{command} cp <src> <dst>` |
+| Save scratch content without committing | `{command} write <path> --stdin --scratch --if-match <working_revision>` |
+| Replace content + commit in one step | `{command} write <path> --stdin --message "..." --if-match <working_revision>` |
+| Change one value + commit | `{command} set <path> --path "a.b.c" --value X --message "..." --if-match <working_revision>` |
+| Commit an existing scratch edit | `{command} commit <path> --message "..." --if-match <working_revision>` |
+| Current state | `{command} status <path>` (untracked / clean / dirty / foreign / missing) |
+| Diff against a point in time | `{command} diff <path> --from 2026-08-01 --to working` |
+| Diff against N commits ago | `{command} diff <path> --from latest~3` |
+| Read past content | `{command} show <path> <rev>` |
+| History of one value | `{command} path-history <path> --path a.b.c` |
+| Full commit log | `{command} log <path>` |
+| Discard uncommitted edits | `{command} discard <path>` |
+| Restore an old revision (as a new commit) | `{command} rollback <path> <rev> --message "..."` |
+| Accept an edit made outside Chronon | get `working_revision`, then `{command} accept <path> --if-match <working_revision>`; read again before the next write |
 
 `<rev>` accepts an integer seq, `working`, `latest`, `latest~N`, an ISO date/timestamp,
 or a relative time like `"7d ago"`.
@@ -109,22 +142,40 @@ Run `chronon --help` or `chronon <command> --help` for the full command list.
 {END_MARKER}"""
 
 
-def ensure_agents_md(root: Path, filename: str = DEFAULT_AGENTS_MD) -> dict[str, Any]:
+def render_section() -> str:
+    """Render generic guidance that explains how a vault is selected."""
+    return _render_section(None)
+
+
+def render_vault_section(vault: str) -> str:
+    """Render guidance specialized for one registered vault name."""
+    return _render_section(vault)
+
+
+def ensure_agents_md(
+    root: Path,
+    filename: str = DEFAULT_AGENTS_MD,
+    vault: str | None = None,
+) -> dict[str, Any]:
     """Create the agents doc if missing, or update chronon's section in place.
 
     ``filename`` is the doc's name at ``root`` and defaults to ``CHRONON.md``;
     pass e.g. ``"AGENTS.md"`` or ``"CLAUDE.md"`` to target another file.
 
     Never touches content outside the markers, so hand-written instructions in
-    the rest of the file survive repeated calls (e.g. from `chronon init
-    --agents-md` after the file already exists, or a manual `chronon
-    agents-md` re-run after upgrading).
+    the rest of the file survive repeated `chronon agents-md` calls.
     """
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise InvalidArgument(
+            "agent instructions destination must be an existing directory",
+            path=str(root),
+        )
     name = Path(filename).name
     if not name or name != filename:
         raise InvalidArgument("invalid agent instructions filename", filename=filename)
     path = root / name
-    section = render_section()
+    section = render_vault_section(vault) if vault else render_section()
 
     if not path.exists():
         try:

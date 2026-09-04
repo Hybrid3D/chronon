@@ -55,18 +55,12 @@ def init_repository(
     directory: str | Path = ".",
     mode: str = "manual",
     register_vault: str | None = None,
-    agents_md: bool | str | None = False,
 ) -> dict[str, Any]:
     result = init_store(directory, mode)
     if register_vault:
         from chronon.core.vaults import add_vault
 
         result["vault"] = add_vault(register_vault, result["root"])
-    if agents_md:
-        from chronon.core.docs import DEFAULT_AGENTS_MD, ensure_agents_md
-
-        filename = agents_md if isinstance(agents_md, str) else DEFAULT_AGENTS_MD
-        result["agents_md"] = ensure_agents_md(Path(result["root"]), filename)
     return result
 
 
@@ -91,6 +85,20 @@ def remove_vault(name: str) -> dict[str, Any]:
     from chronon.core.vaults import remove_vault as _remove_vault
 
     return _remove_vault(name)
+
+
+def write_agent_instructions(
+    directory: str | Path = ".",
+    vault: str | None = None,
+    filename: str = "CHRONON.md",
+) -> dict[str, Any]:
+    """Write AI guidance outside a vault, optionally specialized for one vault."""
+    from chronon.core.docs import ensure_agents_md
+    from chronon.core.vaults import resolve_vault
+
+    if vault:
+        resolve_vault(vault)
+    return ensure_agents_md(Path(directory), filename, vault=vault)
 
 
 def _author(author: str | None) -> str:
@@ -1082,11 +1090,6 @@ class ChrononRepository:
             "registered": True,
             "schema": str(self._schema_path(relative)),
         }
-
-    def write_agents_md(self, filename: str | None = None) -> dict[str, Any]:
-        from chronon.core.docs import DEFAULT_AGENTS_MD, ensure_agents_md
-
-        return ensure_agents_md(self.root, filename or DEFAULT_AGENTS_MD)
 
     @staticmethod
     def _validate_schema_json(schema: dict[str, Any]) -> None:
