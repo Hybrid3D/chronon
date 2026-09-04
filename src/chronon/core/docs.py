@@ -33,14 +33,25 @@ This repository tracks some files with **chronon**: a local, per-document,
 time-indexed history — independent of git's per-repository commit history.
 It's a plain CLI; no MCP server needs to be configured to use it.
 
-> **IMPORTANT — chronon is a tool, not content.** Chronon is only how you
-> *save* changes to tracked files. Never mention chronon, its commands, its
-> vault names, or "commit via chronon" in anything you produce: not in file
-> contents you write, not in documents, summaries, commit messages, PR text,
-> or chat answers to the user. The reader of those files must not need to
-> know chronon exists. Use the commands below silently when you edit a
-> tracked file, and describe your work in normal terms ("updated the sale
-> info", not "ran `chronon write ...`").
+> **IMPORTANT — chronon is plumbing. Run it, don't talk about it.**
+> Chronon is only *how* you read and save tracked files, the same way `ls`
+> and `cat` are how you look around. You don't tell the user "I ran `ls`,
+> then I ran `cat`" — so don't tell them "chronon status를 했습니다",
+> "chronon ls 실행", "chronon write로 커밋했습니다" either. Just do it and
+> report the actual work.
+>
+> - **Never narrate chronon commands** in your replies to the user or in a
+>   task summary. "아파트/매매정보.md의 매도호가를 갱신했습니다" — yes.
+>   "`chronon write --vault investment ...`를 실행했습니다" — no.
+> - **Never put chronon into anything you write**: not into file contents,
+>   documents, reports, commit messages, or PR text. A sentence like
+>   "갱신은 chronon을 통해서만 (`chronon write ...`)" must never appear in a
+>   deliverable. The reader must not need to know chronon exists.
+> - Describing *what you looked at* in plain terms is fine — "investment
+>   vault의 README.md를 확인했습니다" is OK; naming the chronon command you
+>   used to read it is not.
+> - Chronon commands and their `--json` output are for you to act on, then
+>   discard — like shell output, not like results to hand over.
 
 - A commit always needs `--message`. Nothing is saved to history automatically —
   uncommitted edits sit in the working copy (`chronon status` calls this `dirty`)
@@ -48,6 +59,9 @@ It's a plain CLI; no MCP server needs to be configured to use it.
 - History is per file, not per repository: each tracked file has its own
   independent, linear, immutable timeline. There is no multi-file atomic commit.
 - For YAML/JSON, diffs are structural (`path: old -> new`), not line-based text.
+- `chronon mv` keeps history; a rename spanning the diff range shows as a
+  `renamed: old -> new` line. `chronon cp` makes a fresh resource (new id,
+  history from revision 0) that records where it was copied from.
 - Prefer the one-shot `--message` forms below over separate save-then-commit —
   message cost is near zero for an agent, and it keeps history dense and useful.
 
@@ -56,6 +70,8 @@ Add `--json` to any command for machine-readable output.
 | Task | Command |
 |---|---|
 | Start tracking a file | `chronon add <path>` |
+| Rename a tracked file (keeps history) | `chronon mv <old> <new>` |
+| Copy a tracked file to a new path | `chronon cp <src> <dst>` |
 | Save + commit in one step | `chronon write <path> --file <path> --message "..."` |
 | Change one value + commit | `chronon set <path> --path "a.b.c" --value X --message "..."` |
 | Commit an already-saved edit | `chronon commit <path> --message "..." --if-match <working_revision>` |

@@ -23,7 +23,8 @@ def test_ensure_agents_md_creates_file(tmp_path: Path) -> None:
     assert BEGIN_MARKER in content
     assert END_MARKER in content
     assert "chronon add <path>" in content
-    assert "chronon is a tool, not content" in content.lower()
+    assert "chronon is plumbing" in content.lower()
+    assert "never narrate chronon commands" in content.lower()
 
 
 def test_ensure_agents_md_custom_filename(tmp_path: Path) -> None:
