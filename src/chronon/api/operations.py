@@ -3,6 +3,9 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import shutil
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +21,7 @@ from chronon.core.errors import (
     NothingToCommit,
     PathError,
     PreconditionRequired,
+    ResourceAlreadyTracked,
     RevisionConflict,
     ValidationFailed,
 )
@@ -26,9 +30,22 @@ from chronon.core.path import get_value
 from chronon.core.path import set_value as set_document_value
 from chronon.core.path import unset_value as unset_document_value
 from chronon.core.revspec import parse_time_filter, resolve_revision
-from chronon.core.snapshot import Commit, create_snapshot, read_index, read_snapshot
+from chronon.core.snapshot import (
+    Commit,
+    create_snapshot,
+    read_index,
+    read_snapshot,
+)
 from chronon.core.state import resource_state, update_state
-from chronon.core.store import Store, atomic_write, init_store
+from chronon.core.store import (
+    Store,
+    atomic_write,
+    atomic_write_json,
+    content_hash,
+    init_store,
+    new_resource_id,
+    now_iso,
+)
 from chronon.harness.base import parse_content, validate_content
 
 MISSING = object()
@@ -270,6 +287,244 @@ class ChrononRepository:
             "entries": [entries[name] for name in sorted(entries)],
         }
 
+    @contextmanager
+    def _lock_pair(self, first: str, second: str) -> Iterator[None]:
+        """Lock two resources in a stable order so move/copy cannot deadlock."""
+        with ExitStack() as stack:
+            for relative in sorted({first, second}):
+                stack.enter_context(resource_operation_lock(self.store, relative))
+            yield
+
+    def _move_schema(self, source: str, destination: str) -> bool:
+        origin = self._schema_path(source)
+        if not origin.is_file():
+            return False
+        target = self._schema_path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(origin, target)
+        return True
+
+    def _copy_schema(self, source: str, destination: str) -> bool:
+        origin = self._schema_path(source)
+        if not origin.is_file():
+            return False
+        target = self._schema_path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origin, target)
+        return True
+
+    @staticmethod
+    def _prune_empty_parents(start: Path, stop: Path) -> None:
+        current = start
+        while (
+            current != stop
+            and current.is_dir()
+            and not any(current.iterdir())
+        ):
+            current.rmdir()
+            current = current.parent
+
+    def _check_destination_free(self, destination: str) -> None:
+        if self.store.is_tracked(destination):
+            raise ResourceAlreadyTracked(
+                "destination is already tracked by chronon", resource=destination
+            )
+        if (self.store.root / destination).exists():
+            raise FileError(
+                "destination path already exists",
+                resource=destination,
+                hint="move/copy will not overwrite an existing file",
+            )
+        meta = self.store.resource_dir(destination)
+        if meta.exists() and any(meta.iterdir()):
+            raise FileError(
+                "leftover chronon metadata exists at the destination",
+                resource=destination,
+            )
+
+    def _path_log(
+        self, relative: str, descriptor: dict[str, Any] | None = None
+    ) -> list[dict[str, str]]:
+        """The resource's ``[{path, since}]`` timeline, oldest first.
+
+        Pre-``path_log`` descriptors are synthesized from the first commit's
+        timestamp so historical diffs still resolve a path.
+        """
+        descriptor = descriptor or self.store.read_descriptor(relative)
+        log = descriptor.get("path_log")
+        if isinstance(log, list) and log:
+            return [dict(entry) for entry in log]
+        commits = read_index(self.store, relative)
+        since = commits[0].timestamp if commits else "0000-00-00T00:00:00.000000Z"
+        return [{"path": descriptor.get("resource", relative), "since": since}]
+
+    @staticmethod
+    def _path_at(path_log: list[dict[str, str]], when: str | None) -> str:
+        """Path in effect at ISO timestamp ``when`` (``None`` → the latest path)."""
+        if not path_log:
+            return ""
+        if when is None:
+            return path_log[-1]["path"]
+        chosen = path_log[0]["path"]
+        for entry in path_log:
+            if entry["since"] <= when:
+                chosen = entry["path"]
+            else:
+                break
+        return chosen
+
+    def move(
+        self, source: str | Path, destination: str | Path
+    ) -> dict[str, Any]:
+        """Rename a tracked file, carrying its full history and id along.
+
+        The path change is appended to the descriptor's ``path_log`` so
+        ``chronon diff`` can report the rename between two points in time.
+        """
+        origin = self.store.require_tracked(source)
+        target = self.store.normalize_resource(destination)
+        if origin == target:
+            raise InvalidArgument(
+                "source and destination are the same path", resource=origin
+            )
+        with self._lock_pair(origin, target):
+            origin_file = self.store.root / origin
+            target_file = self.store.root / target
+            if not origin_file.is_file():
+                raise FileError("working copy does not exist", resource=origin)
+            self._check_destination_free(target)
+
+            origin_meta = self.store.resource_dir(origin)
+            target_meta = self.store.resource_dir(target)
+            descriptor = self.store.read_descriptor(origin)
+            resource_id = descriptor.get("id") or new_resource_id()
+            prior_log = self._path_log(origin, descriptor)
+
+            target_meta.parent.mkdir(parents=True, exist_ok=True)
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            if target_meta.exists():
+                target_meta.rmdir()
+            os.rename(origin_meta, target_meta)
+            moved_schema = self._move_schema(origin, target)
+            try:
+                os.rename(origin_file, target_file)
+            except OSError as exc:
+                os.rename(target_meta, origin_meta)
+                if moved_schema:
+                    self._move_schema(target, origin)
+                raise FileError(
+                    "cannot move working copy", resource=target
+                ) from exc
+
+            descriptor["id"] = resource_id
+            descriptor["resource"] = target
+            descriptor["path_log"] = [
+                *prior_log,
+                {"path": target, "since": now_iso()},
+            ]
+            descriptor.pop("previous_paths", None)
+            atomic_write_json(self.store.descriptor_path(target), descriptor)
+            self.store.forget_id_cache(origin)
+            self.store.forget_id_cache(target)
+            self._prune_empty_parents(
+                origin_meta.parent, self.store.metadata / "resources"
+            )
+
+            commits = read_index(self.store, target)
+            return {
+                "moved": True,
+                "id": resource_id,
+                "from": origin,
+                "to": target,
+                "path_log": descriptor["path_log"],
+                "history_count": len(commits),
+            }
+
+    def copy(
+        self, source: str | Path, destination: str | Path
+    ) -> dict[str, Any]:
+        """Copy a tracked file to a new path as an independent resource.
+
+        The copy is a fresh resource: new id, history starting at revision 0
+        (no snapshots are branched). Its descriptor's ``copied_from`` records
+        the source's id and the exact source revision the bytes came from, so
+        the lineage is recoverable without linking the two histories.
+        """
+        origin = self.store.require_tracked(source)
+        target = self.store.normalize_resource(destination)
+        if origin == target:
+            raise InvalidArgument(
+                "source and destination are the same path", resource=origin
+            )
+        with self._lock_pair(origin, target):
+            origin_file = self.store.root / origin
+            target_file = self.store.root / target
+            if not origin_file.is_file():
+                raise FileError("working copy does not exist", resource=origin)
+            self._check_destination_free(target)
+
+            target_meta = self.store.resource_dir(target)
+            origin_descriptor = self.store.read_descriptor(origin)
+            source_id = origin_descriptor.get("id") or new_resource_id()
+            new_id = new_resource_id()
+            source_status = resource_state(self.store, origin)
+
+            try:
+                content = origin_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise FileError(
+                    "working copy is not readable UTF-8 text", resource=origin
+                ) from exc
+
+            now = now_iso()
+            copied_from = {
+                "id": source_id,
+                "path": origin,
+                "revision": source_status["working_revision"],
+                "seq": source_status["latest_seq"],
+                "state": source_status["state"],
+                "content_hash": content_hash(content),
+                "at": now,
+            }
+            descriptor: dict[str, Any] = {
+                "resource": target,
+                "id": new_id,
+                "path_log": [{"path": target, "since": now}],
+                "copied_from": copied_from,
+            }
+
+            target_meta.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(target_meta / "resource.json", descriptor)
+            atomic_write_json(
+                target_meta / "state.json",
+                {
+                    "last_written_hash": content_hash(content),
+                    "last_written_at": None,
+                    "last_seq": 0,
+                    "working_generation": 0,
+                },
+            )
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(target_file, content)
+            self._copy_schema(origin, target)
+
+            if origin_descriptor.get("id") != source_id:
+                origin_descriptor["id"] = source_id
+                atomic_write_json(
+                    self.store.descriptor_path(origin), origin_descriptor
+                )
+            self.store.forget_id_cache(target)
+
+            return {
+                "copied": True,
+                "id": new_id,
+                "source_id": source_id,
+                "source_revision": source_status["working_revision"],
+                "from": origin,
+                "to": target,
+                "history_count": 0,
+            }
+
     def commit(
         self,
         resource: str | Path,
@@ -370,10 +625,22 @@ class ChrononRepository:
             )
         except ValueError as exc:
             raise InvalidArgument(str(exc), value=format) from exc
+
+        path_log = self._path_log(relative)
+        from_when = from_commit.timestamp if from_commit else None
+        to_when = to_commit.timestamp if to_commit else None
+        from_path = self._path_at(path_log, from_when)
+        to_path = self._path_at(path_log, to_when)
+
         return {
             "resource": relative,
             "from": _commit_ref(str(from_ref), from_commit),
             "to": _commit_ref(str(to_ref), to_commit),
+            "path_change": {
+                "from": from_path,
+                "to": to_path,
+                "changed": from_path != to_path,
+            },
             **comparison,
         }
 

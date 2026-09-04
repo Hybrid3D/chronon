@@ -119,6 +119,15 @@ def _format_commit_time(value: str | None) -> str:
         return value[:16]
 
 
+def _echo_path_change(value: dict[str, Any]) -> bool:
+    """Print a `renamed: old -> new` line for a diff that spans a `chronon mv`."""
+    change = value.get("path_change")
+    if change and change.get("changed"):
+        typer.echo(f"renamed: {change['from']} -> {change['to']}")
+        return True
+    return False
+
+
 def _emit(value: Any, json_output: bool = False) -> None:
     if json_output:
         typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
@@ -139,6 +148,7 @@ def _emit(value: Any, json_output: bool = False) -> None:
         commit = value["commit"]
         typer.echo(f"[{value['resource']} {commit['seq']}] {commit['message']}")
     elif "changes" in value:
+        renamed = _echo_path_change(value)
         for change in value["changes"]:
             marker = {"added": "+", "removed": "-", "modified": "~"}[change["op"]]
             if change["op"] == "modified":
@@ -146,14 +156,15 @@ def _emit(value: Any, json_output: bool = False) -> None:
             else:
                 detail = repr(change.get("new", change.get("old")))
             typer.echo(f"{marker} {change['path']}: {detail}")
-        if not value["changes"]:
+        if not value["changes"] and not renamed:
             typer.echo("No changes")
         if value.get("text"):
             typer.echo(value["text"], nl=not value["text"].endswith("\n"))
     elif "text" in value:
+        renamed = _echo_path_change(value)
         if value["text"]:
             typer.echo(value["text"], nl=not value["text"].endswith("\n"))
-        else:
+        elif not renamed:
             typer.echo("No changes")
     elif "commits" in value:
         for commit in value["commits"]:
@@ -205,6 +216,18 @@ def _emit(value: Any, json_output: bool = False) -> None:
         latest = value.get("latest_commit_at") or "-"
         typer.echo(
             f"{value['state']:<9} {value['resource']}  commits={count}  last={latest}"
+        )
+        if value.get("id"):
+            typer.echo(f"          id={value['id']}")
+    elif value.get("moved"):
+        typer.echo(
+            f"Renamed {value['from']} -> {value['to']} "
+            f"(id {value['id']}, {value['history_count']} commits)"
+        )
+    elif value.get("copied"):
+        typer.echo(
+            f"Copied {value['from']} -> {value['to']} "
+            f"(id {value['id']}, from {value['source_id']}@{value['source_revision']})"
         )
     elif value.get("created") and value.get("written"):
         typer.echo(f"Created {value['resource']}")
@@ -324,6 +347,44 @@ def commit(
         ),
         json_output,
     )
+
+
+@app.command("mv")
+def move_command(
+    source: Path,
+    destination: Path,
+    vault: str | None = VAULT_OPTION,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Rename a tracked file, keeping its full history and id."""
+    _run(
+        lambda: ChrononRepository(vault=vault).move(source, destination),
+        json_output,
+    )
+
+
+app.command("move", hidden=True)(move_command)
+
+
+@app.command("cp")
+def copy_command(
+    source: Path,
+    destination: Path,
+    vault: str | None = VAULT_OPTION,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Copy a tracked file to a new path as a fresh resource.
+
+    The copy gets a new id and its history starts at revision 0; its descriptor
+    records the source id and the source revision it was copied from.
+    """
+    _run(
+        lambda: ChrononRepository(vault=vault).copy(source, destination),
+        json_output,
+    )
+
+
+app.command("copy", hidden=True)(copy_command)
 
 
 @app.command("diff")

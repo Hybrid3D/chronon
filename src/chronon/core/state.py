@@ -45,6 +45,7 @@ def working_revision(generation: int, working_hash: str) -> str:
 
 def resource_state(store: Store, resource: str) -> dict[str, Any]:
     resource = store.require_tracked(resource)
+    resource_id = store.ensure_resource_id(resource)
     working = store.working_path(resource)
     if not working.is_file():
         raise FileError("working copy does not exist", resource=resource)
@@ -69,6 +70,7 @@ def resource_state(store: Store, resource: str) -> dict[str, Any]:
         state = "foreign"
     return {
         "resource": resource,
+        "id": resource_id,
         "state": state,
         "working_hash": working_hash,
         "working_generation": generation,

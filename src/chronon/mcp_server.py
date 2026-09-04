@@ -48,6 +48,34 @@ def add_resource(resource: str,
 
 
 @mcp.tool()
+def move_resource(
+    source: str,
+    destination: str,
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """Rename a tracked file, preserving its full history and its resource id."""
+    return _safe(
+        lambda: ChrononRepository(vault=vault).move(source, destination)
+    )
+
+
+@mcp.tool()
+def copy_resource(
+    source: str,
+    destination: str,
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """Copy a tracked file to a new path as a fresh resource.
+
+    The copy gets a new id and a history starting at revision 0; its descriptor
+    records the source id and the source revision the content came from.
+    """
+    return _safe(
+        lambda: ChrononRepository(vault=vault).copy(source, destination)
+    )
+
+
+@mcp.tool()
 def read_resource(
     resource: str, at: str = "working", format: str = "raw",
     vault: str | None = None,

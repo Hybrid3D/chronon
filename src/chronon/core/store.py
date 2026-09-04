@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import tempfile
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,21 @@ from .errors import (
     RepositoryNotFound,
     ResourceNotTracked,
 )
+
+
+def now_iso() -> str:
+    """Current UTC time as a ``...Z`` ISO 8601 string (sorts lexicographically)."""
+    return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def new_resource_id() -> str:
+    """Mint an opaque, stable identity for a tracked resource.
+
+    The id is 128 random bits rendered as hex. It is assigned once, when a file
+    starts being tracked, and then follows the file across renames (`chronon
+    mv`) so history can be attributed to the file rather than to its path.
+    """
+    return secrets.token_hex(16)
 
 CONFIG_TEXT = """format_version = 1
 mode = "manual"
@@ -158,6 +175,7 @@ class Store:
     ) -> None:
         self.root = resolve_root(vault, root)
         self.metadata = self.root / ".chronon"
+        self._id_cache: dict[str, str] = {}
         try:
             self.config = tomllib.loads(
                 (self.metadata / "config.toml").read_text(encoding="utf-8")
@@ -215,6 +233,47 @@ class Store:
     def is_tracked(self, resource: str | Path) -> bool:
         return self.descriptor_path(resource).is_file()
 
+    def read_descriptor(self, resource: str | Path) -> dict[str, Any]:
+        path = self.descriptor_path(resource)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise ResourceNotTracked(
+                "resource is not tracked", resource=str(resource)
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise FileError(
+                "cannot read resource descriptor", resource=str(resource)
+            ) from exc
+        if not isinstance(data, dict):
+            raise FileError(
+                "resource descriptor is malformed", resource=str(resource)
+            )
+        return data
+
+    def ensure_resource_id(self, resource: str | Path) -> str:
+        """Return the resource's id, minting and persisting one if absent.
+
+        Repositories created before ids existed have descriptors without an
+        ``id`` field; this backfills them transparently on first use.
+        """
+        relative = self.normalize_resource(resource)
+        cached = self._id_cache.get(relative)
+        if cached:
+            return cached
+        data = self.read_descriptor(relative)
+        resource_id = data.get("id")
+        if not resource_id or not isinstance(resource_id, str):
+            resource_id = new_resource_id()
+            data["id"] = resource_id
+            data.setdefault("resource", relative)
+            atomic_write_json(self.descriptor_path(relative), data)
+        self._id_cache[relative] = resource_id
+        return resource_id
+
+    def forget_id_cache(self, resource: str | Path) -> None:
+        self._id_cache.pop(self.normalize_resource(resource), None)
+
     def require_tracked(self, resource: str | Path) -> str:
         relative = self.normalize_resource(resource)
         if not self.is_tracked(relative):
@@ -223,6 +282,7 @@ class Store:
                 resource=relative,
                 hint=f"run 'chronon add {relative}'",
             )
+        self.ensure_resource_id(relative)
         return relative
 
     def add(self, resource: str | Path) -> dict[str, Any]:
@@ -240,7 +300,14 @@ class Store:
         created = not self.is_tracked(relative)
         resource_dir.mkdir(parents=True, exist_ok=True)
         if created:
-            atomic_write_json(resource_dir / "resource.json", {"resource": relative})
+            atomic_write_json(
+                resource_dir / "resource.json",
+                {
+                    "resource": relative,
+                    "id": new_resource_id(),
+                    "path_log": [{"path": relative, "since": now_iso()}],
+                },
+            )
             atomic_write_json(
                 resource_dir / "state.json",
                 {

@@ -64,6 +64,30 @@ chronon status docs.yml
 
 Chronon에는 staged 영역이 없습니다. `add`는 추적 시작이고, `commit`은 호출 시점의 작업본을 바로 기록합니다. 커밋은 항상 파일 하나 단위이며 message가 필수입니다.
 
+## 파일 이동과 복사
+
+추적되는 파일은 각자 고유한 불투명 `id`(128비트 hex)를 가집니다. `add`할 때 한 번 부여되고 이후 이름을 바꿔도 유지됩니다. `id`가 없던 이전 저장소는 파일을 처음 다룰 때 자동으로 채워집니다. `chronon status <파일>`에 `id=...`로 표시됩니다.
+
+```bash
+# git mv: 이력과 id를 그대로 유지한 채 경로만 바꿉니다.
+chronon mv docs.yml config/web.yml
+
+# cp: 새 경로에 독립된 리소스로 복사합니다. 새 id가 생기고 이력은 revision 0부터
+#     다시 시작합니다(스냅샷 가지치기 없음). descriptor의 copied_from에 원본의 id와
+#     복사 시점의 원본 revision(working_revision·seq·content_hash)이 기록됩니다.
+chronon cp config/web.yml config/web.backup.yml
+```
+
+`mv`와 `cp` 모두 대상 경로에 파일이 이미 있거나 이미 추적 중이면 거부하며, 원본은 그대로 둡니다. `mv`는 작업본 파일과 `.chronon/` 메타데이터(이력·스키마)를 함께 옮깁니다. 이동 후 옛 경로는 더 이상 추적되지 않습니다.
+
+경로 변경 자체도 이력입니다. `mv`는 descriptor의 `path_log`(경로별 적용 시각)에 항목을 추가하고, `chronon diff`는 두 시점의 경로가 다르면 `path_change`(사람용 출력에서는 `renamed: 옛경로 -> 새경로`)를 함께 보고합니다.
+
+```bash
+chronon mv docs.yml config/web.yml
+chronon diff config/web.yml                    # renamed: docs.yml -> config/web.yml
+chronon diff config/web.yml --from 1 --to working   # 이름 변경 + 값 변경을 함께
+```
+
 ## 조회와 편집
 
 ```bash
@@ -163,6 +187,6 @@ chronon init --agents-md-file AGENTS.md
 
 ## MCP
 
-`chronon-mcp`는 stdio MCP 서버를 실행합니다. CLI와 동일한 operation layer를 사용하며 `add_resource`, `read_resource`, `diff_resource`, `history_resource`, `commit_resource`, `write_resource`, `status_resource`, `path_history`, `rollback_resource` 등을 제공합니다.
+`chronon-mcp`는 stdio MCP 서버를 실행합니다. CLI와 동일한 operation layer를 사용하며 `add_resource`, `move_resource`, `copy_resource`, `read_resource`, `diff_resource`, `history_resource`, `commit_resource`, `write_resource`, `status_resource`, `path_history`, `rollback_resource` 등을 제공합니다.
 
 MCP 서버의 작업 디렉터리는 초기화된 프로젝트 내부여야 합니다.

@@ -10,6 +10,8 @@ def test_mcp_exposes_manual_versioning_tools() -> None:
     names = {tool.name for tool in tools}
     assert {
         "add_resource",
+        "move_resource",
+        "copy_resource",
         "commit_resource",
         "diff_resource",
         "history_resource",
