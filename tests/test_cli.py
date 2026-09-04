@@ -4,9 +4,20 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from chronon import __version__
 from chronon.cli import app
 
 runner = CliRunner()
+
+
+def test_global_version_options_replace_version_command() -> None:
+    for option in ("--version", "-V"):
+        result = runner.invoke(app, [option])
+        assert result.exit_code == 0, result.output
+        assert result.output == f"chronon {__version__}\n"
+
+    removed = runner.invoke(app, ["version"])
+    assert removed.exit_code != 0
 
 
 def _working_revision(resource: str) -> str:

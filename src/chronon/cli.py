@@ -37,9 +37,25 @@ VAULT_OPTION = typer.Option(
 _ACTIVE_VAULT: ContextVar[str | None] = ContextVar("chronon_active_vault", default=None)
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"chronon {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def configure_cli(vault: str | None = VAULT_OPTION) -> None:
-    """Select a registered vault for the command being run."""
+def configure_cli(
+    vault: str | None = VAULT_OPTION,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Print the installed version and exit.",
+        is_eager=True,
+        callback=_version_callback,
+    ),
+) -> None:
+    """Configure global options for the command being run."""
     _ACTIVE_VAULT.set(vault)
 
 
@@ -688,11 +704,6 @@ def agents_md_command(
         lambda: ChrononRepository(vault=_active_vault()).write_agents_md(filename),
         json_output,
     )
-
-
-@app.command()
-def version() -> None:
-    typer.echo(__version__)
 
 
 def main() -> None:

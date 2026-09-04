@@ -49,7 +49,7 @@ pipx ensurepath
 # Clone this repository into a directory named chronon, then:
 cd chronon
 pipx install .
-chronon version
+chronon --version
 ```
 
 If Python 3.11+ is already installed, only pipx and the final three commands are
@@ -68,7 +68,7 @@ pipx ensurepath
 # Clone this repository into a directory named chronon, then:
 cd chronon
 pipx install .
-chronon version
+chronon --version
 ```
 
 Fedora:
@@ -79,7 +79,7 @@ pipx ensurepath
 # Clone this repository into a directory named chronon, then:
 cd chronon
 pipx install .
-chronon version
+chronon --version
 ```
 
 Do not install into an OS-managed Python with `sudo pip`. On distributions that
@@ -101,7 +101,7 @@ pipx ensurepath
 # Clone this repository into a directory named chronon, then:
 cd chronon
 pipx install .
-chronon version
+chronon --version
 ```
 
 ### Windows (PowerShell)
@@ -117,7 +117,7 @@ py -m pipx ensurepath
 # Clone this repository into a directory named chronon, then:
 Set-Location chronon
 pipx install .
-chronon version
+chronon --version
 ```
 
 If `pipx` is still not found after reopening PowerShell, follow the PATH step in
@@ -395,9 +395,9 @@ Run `chronon COMMAND --help` for every option.
 | `validate FILE` | Validate current content |
 | `agents-md [NAME]` | Create or refresh AI CLI guidance |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
-| `version` | Print the installed version |
 
-Add `--json` for machine-readable output. Domain errors also become JSON and
+Use `chronon --version` (or `chronon -V`) to print the installed version. Add
+`--json` for machine-readable output. Domain errors also become JSON and
 include a stable `error` code. Common exit codes are: `3` for repository/file
 lookup, `4` for invalid arguments, `5` for nothing to commit, `6` for protected
 foreign changes, `7` for a missing/stale precondition, and `8` when no state

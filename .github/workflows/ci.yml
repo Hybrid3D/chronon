@@ -42,7 +42,7 @@ jobs:
       - run: python -m pytest --cov=chronon --cov-report=term-missing
       - if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python -m pip_audit . --skip-editable
-      - run: chronon version
+      - run: chronon --version
       - run: chronon --help
 
   package:
@@ -59,7 +59,7 @@ jobs:
       - run: python -m build
       - run: python -m twine check dist/*
       - run: python -m pip install --force-reinstall dist/*.whl
-      - run: chronon version
+      - run: chronon --version
       - run: python -c "import asyncio; from chronon.mcp_server import mcp; assert asyncio.run(mcp.list_tools())"
 
   minimum-dependencies:
