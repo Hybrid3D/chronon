@@ -1,4 +1,6 @@
 import json
+import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,19 @@ from chronon.core.errors import (
     RevisionConflict,
     ValidationFailed,
 )
+
+
+def _concurrent_commit_worker(root: str, value: int, start, result) -> None:
+    """Process target kept at module scope so Windows ``spawn`` can import it."""
+    start.wait()
+    try:
+        ChrononRepository(root).write(
+            "docs.yml", f"value: {value}\n", message=f"worker {value}"
+        )
+    except Exception as exc:  # pragma: no cover - asserted through the queue
+        result.put((False, repr(exc)))
+    else:
+        result.put((True, value))
 
 
 @pytest.fixture
@@ -203,6 +218,7 @@ def test_invalid_yaml_never_replaces_working_copy(
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not portable")
 def test_write_preserves_file_permissions(repository: ChrononRepository) -> None:
     path = repository.store.working_path("docs.yml")
     path.chmod(0o640)
@@ -367,3 +383,97 @@ def test_discard_requires_current_scratch_revision(
         "docs.yml", expected_revision=scratch["working_revision"]
     )
     assert discarded["state"] == "clean"
+
+
+def test_force_discard_honors_a_supplied_revision(
+    repository: ChrononRepository,
+) -> None:
+    _commit(repository, "initial")
+    path = repository.store.working_path("docs.yml")
+    observed = repository.status("docs.yml")["working_revision"]
+    path.write_text("external: true\n", encoding="utf-8")
+
+    with pytest.raises(RevisionConflict):
+        repository.discard("docs.yml", force=True, expected_revision=observed)
+
+    assert path.read_text(encoding="utf-8") == "external: true\n"
+
+
+def test_accept_foreign_can_require_the_observed_revision(
+    repository: ChrononRepository,
+) -> None:
+    _commit(repository, "initial")
+    path = repository.store.working_path("docs.yml")
+    path.write_text("external: true\n", encoding="utf-8")
+    observed = repository.status("docs.yml")["working_revision"]
+    path.write_text("external: changed again\n", encoding="utf-8")
+
+    with pytest.raises(RevisionConflict):
+        repository.accept_foreign("docs.yml", observed)
+
+    current = repository.status("docs.yml")["working_revision"]
+    accepted = repository.accept_foreign("docs.yml", current)
+    assert accepted["state"] == "dirty"
+
+
+def test_rollback_refuses_an_unobserved_foreign_change(
+    repository: ChrononRepository,
+) -> None:
+    _commit(repository, "initial")
+    repository.set_value("docs.yml", "servers.web.port", "9090", "int", "change")
+    path = repository.store.working_path("docs.yml")
+    path.write_text("external: true\n", encoding="utf-8")
+
+    with pytest.raises(ForeignChange):
+        repository.rollback("docs.yml", 1, "restore")
+
+    assert path.read_text(encoding="utf-8") == "external: true\n"
+    observed = repository.status("docs.yml")["working_revision"]
+    restored = repository.rollback("docs.yml", 1, "restore", expected_revision=observed)
+    assert restored["commit"]["seq"] == 3
+
+
+def test_missing_working_copy_is_visible_and_recoverable(
+    repository: ChrononRepository,
+) -> None:
+    _commit(repository, "initial")
+    repository.store.working_path("docs.yml").unlink()
+
+    status = repository.status("docs.yml")
+    assert status["state"] == "missing"
+    assert status["working_revision"] is None
+    assert repository.list_resources()["resources"][0]["state"] == "missing"
+
+    restored = repository.discard("docs.yml")
+    assert restored["state"] == "clean"
+    assert "port: 8080" in repository.read("docs.yml")["content"]
+
+
+def test_concurrent_process_commits_keep_a_contiguous_history(tmp_path: Path) -> None:
+    init_repository(tmp_path)
+    (tmp_path / "docs.yml").write_text("value: 0\n", encoding="utf-8")
+    repository = ChrononRepository(tmp_path)
+    repository.add("docs.yml")
+    _commit(repository, "initial")
+
+    context = multiprocessing.get_context("spawn")
+    start = context.Event()
+    results = context.Queue()
+    workers = [
+        context.Process(
+            target=_concurrent_commit_worker,
+            args=(str(tmp_path), value, start, results),
+        )
+        for value in range(1, 5)
+    ]
+    for worker in workers:
+        worker.start()
+    start.set()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+
+    outcomes = [results.get(timeout=2) for _ in workers]
+    assert all(success for success, _ in outcomes), outcomes
+    commits = repository.history("docs.yml")["commits"]
+    assert [commit["seq"] for commit in reversed(commits)] == [1, 2, 3, 4, 5]

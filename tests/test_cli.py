@@ -313,3 +313,39 @@ def test_chronon_commit_commits_exact_scratch_from_outside_vault(
     assert result["committed"] is True
     assert result["state"] == "clean"
     assert runner.invoke(cat_app, [str(resource), "--at", "latest"]).output == "draft\n"
+
+
+def test_chronon_write_validation_errors_are_json_when_requested(
+    tmp_path: Path,
+) -> None:
+    resource = tmp_path / "new.txt"
+    result = runner.invoke(
+        write_app,
+        [str(resource), "--content", "value", "--stdin", "--scratch", "--json"],
+        input="other",
+    )
+
+    assert result.exit_code == 4
+    payload = json.loads(result.output)
+    assert payload["error"] == "invalid_argument"
+    assert "exactly one" in payload["message"]
+
+
+def test_generic_cli_errors_are_json_when_requested(
+    tmp_path: Path, monkeypatch
+) -> None:
+    assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
+    resource = tmp_path / "config.json"
+    resource.write_text('{"value": 1}\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["add", "config.json"]).exit_code == 0
+    schema = tmp_path / "schema.json"
+    schema.write_text("not json\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["schema-register", "config.json", "--file", str(schema), "--json"],
+    )
+
+    assert result.exit_code == 4
+    assert json.loads(result.output)["error"] == "invalid_argument"

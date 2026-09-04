@@ -34,6 +34,7 @@ def new_resource_id() -> str:
     """
     return secrets.token_hex(16)
 
+
 CONFIG_TEXT = """format_version = 1
 mode = "manual"
 
@@ -143,7 +144,13 @@ def init_store(directory: str | Path = ".", mode: str = "manual") -> dict[str, A
             raise AlreadyInitialized(
                 "existing chronon configuration is invalid", path=str(config_path)
             ) from exc
-        if config.get("format_version") != 1 or config.get("mode") != mode:
+        format_version = config.get("format_version")
+        if (
+            not isinstance(format_version, int)
+            or isinstance(format_version, bool)
+            or format_version != 1
+            or config.get("mode") != mode
+        ):
             raise AlreadyInitialized(
                 "repository already exists with different settings",
                 path=str(root),
@@ -184,6 +191,23 @@ class Store:
             raise RepositoryNotFound(
                 "cannot read chronon configuration", path=str(self.root)
             ) from exc
+        format_version = self.config.get("format_version")
+        if (
+            not isinstance(format_version, int)
+            or isinstance(format_version, bool)
+            or format_version != 1
+        ):
+            raise RepositoryNotFound(
+                "unsupported chronon repository format",
+                path=str(self.root),
+                format_version=format_version,
+            )
+        if self.config.get("mode") != "manual":
+            raise RepositoryNotFound(
+                "unsupported chronon repository mode",
+                path=str(self.root),
+                mode=self.config.get("mode"),
+            )
 
     def normalize_resource(self, resource: str | Path) -> str:
         supplied = Path(resource).expanduser()
@@ -246,9 +270,7 @@ class Store:
                 "cannot read resource descriptor", resource=str(resource)
             ) from exc
         if not isinstance(data, dict):
-            raise FileError(
-                "resource descriptor is malformed", resource=str(resource)
-            )
+            raise FileError("resource descriptor is malformed", resource=str(resource))
         return data
 
     def ensure_resource_id(self, resource: str | Path) -> str:
@@ -330,7 +352,22 @@ class Store:
         for descriptor in base.rglob("resource.json"):
             try:
                 value = json.loads(descriptor.read_text(encoding="utf-8"))
-                resources.append(self.normalize_resource(value["resource"]))
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                continue
+                if not isinstance(value, dict) or not isinstance(
+                    value.get("resource"), str
+                ):
+                    raise ValueError("missing string resource field")
+                resource = self.normalize_resource(value["resource"])
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                raise FileError(
+                    "resource descriptor is corrupt", path=str(descriptor)
+                ) from exc
+            expected = descriptor.parent.relative_to(base).as_posix()
+            if resource != expected:
+                raise FileError(
+                    "resource descriptor path does not match its resource",
+                    path=str(descriptor),
+                    resource=resource,
+                    expected=expected,
+                )
+            resources.append(resource)
         return sorted(set(resources))

@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from chronon.api.operations import ChrononRepository, init_repository
 from chronon.cli import app
 from chronon.core.docs import BEGIN_MARKER, END_MARKER, ensure_agents_md
+from chronon.core.errors import InvalidArgument
 
 runner = CliRunner()
 
@@ -27,6 +28,8 @@ def test_ensure_agents_md_creates_file(tmp_path: Path) -> None:
     assert "never narrate chronon commands" in content.lower()
     assert "chronon --vault myvault status <path>" in content
     assert "chronon -v myvault diff <path>" in content
+    assert "working_revision" in content
+    assert "revision_conflict" in content
 
 
 def test_ensure_agents_md_custom_filename(tmp_path: Path) -> None:
@@ -41,7 +44,7 @@ def test_ensure_agents_md_custom_filename(tmp_path: Path) -> None:
 
 def test_ensure_agents_md_rejects_path_as_filename(tmp_path: Path) -> None:
     init_repository(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidArgument):
         ensure_agents_md(tmp_path, "sub/AGENTS.md")
 
 
@@ -57,7 +60,9 @@ def test_ensure_agents_md_is_idempotent(tmp_path: Path) -> None:
     assert (tmp_path / "CHRONON.md").read_text(encoding="utf-8") == before
 
 
-def test_ensure_agents_md_appends_to_existing_file_without_marker(tmp_path: Path) -> None:
+def test_ensure_agents_md_appends_to_existing_file_without_marker(
+    tmp_path: Path,
+) -> None:
     init_repository(tmp_path)
     (tmp_path / "CHRONON.md").write_text(
         "# My rules\n\nAlways ask first.\n", encoding="utf-8"
@@ -91,6 +96,27 @@ def test_ensure_agents_md_preserves_content_outside_markers_on_refresh(
     content = path.read_text(encoding="utf-8")
     assert content.startswith("# My Notes\n\nDo not delete this line.\n\n")
     assert content.count(BEGIN_MARKER) == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        f"{BEGIN_MARKER}\nmissing end\n",
+        f"{END_MARKER}\nwrong order\n{BEGIN_MARKER}\n",
+        f"{BEGIN_MARKER}\none\n{END_MARKER}\n{BEGIN_MARKER}\ntwo\n{END_MARKER}\n",
+    ],
+)
+def test_ensure_agents_md_rejects_malformed_markers(
+    tmp_path: Path, content: str
+) -> None:
+    init_repository(tmp_path)
+    path = tmp_path / "CHRONON.md"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(InvalidArgument, match="malformed chronon markers"):
+        ensure_agents_md(tmp_path)
+
+    assert path.read_text(encoding="utf-8") == content
 
 
 def test_repository_write_agents_md(tmp_path: Path) -> None:

@@ -1,194 +1,577 @@
 # Chronon
 
-Chronon은 파일 하나마다 독립적인 불변 이력을 만드는 로컬 버전 관리 도구입니다. 커밋을 시간으로 조회하고 YAML·JSON의 값 단위 차이를 볼 수 있습니다. git과 함께 사용할 수 있지만 git을 호출하거나 대체하지 않습니다.
+Chronon is a local version history for individual UTF-8 documents. Each tracked
+file gets its own linear, immutable timeline, time-based lookup, and structural
+diffs for YAML and JSON. It works alongside Git, but does not call or replace
+Git.
 
-현재 버전은 **manual commit mode**만 지원합니다. auto mode는 누적 변화량과 시간을 관찰하며, 기본적으로 마지막 수정 후 15분 idle 또는 최대 2시간 간격에 AI가 커밋 필요성과 message를 결정하도록 설계되어 있지만 아직 실행되지 않습니다.
+Chronon can be used in three ways:
 
-## 설치
+- by a person through the `chronon` CLI;
+- by an AI agent through the same CLI, guided by a generated `CHRONON.md`; or
+- by an AI client through the local stdio MCP server, `chronon-mcp`.
 
-Python 3.11 이상이 필요합니다.
+> **Project status:** alpha. Manual commit mode is implemented. `--mode auto` is
+> reserved but intentionally returns `not_implemented`. Before relying on
+> Chronon as the only copy of important history, read [Data and backups](#data-and-backups).
 
-```bash
-python -m pip install -e .
+## Requirements
+
+- Python 3.11 or newer
+- Windows 10/11, Linux, WSL2, or macOS
+- UTF-8 text files; YAML, JSON, Markdown, and plain text are the primary formats
+
+## Installation
+
+[`pipx`](https://pipx.pypa.io/latest/how-to/install-pipx.html) is recommended for
+an end-user CLI installation. It gives Chronon its own Python environment while
+putting all commands on `PATH`.
+
+The package name is `chronon-vcs`; the installed commands are:
+
+```text
+chronon
+chronon-ls
+chronon-cat
+chronon-write
+chronon-commit
+chronon-mcp
 ```
 
-개발 테스트까지 설치하려면 다음을 사용합니다.
+### macOS
+
+Install Python and pipx, then install from a checked-out copy of this repository:
 
 ```bash
-python -m pip install -e '.[dev]'
-pytest
+brew install python pipx
+pipx ensurepath
+# Open a new terminal after ensurepath.
+
+# Clone this repository into a directory named chronon, then:
+cd chronon
+pipx install .
+chronon version
 ```
 
-## 시작하기
+If Python 3.11+ is already installed, only pipx and the final three commands are
+needed.
 
-git처럼 프로젝트 디렉터리를 초기화합니다. 디렉터리를 생략하면 현재 디렉터리가 대상입니다.
+### Linux
+
+Ubuntu 23.04+/Debian 12+:
 
 ```bash
-chronon init ./my-project
-cd ./my-project
+sudo apt update
+sudo apt install pipx
+pipx ensurepath
+# Open a new shell after ensurepath.
 
-chronon add docs.yml
-chronon-cat docs.yml --json                 # working_revision 확인
-chronon commit docs.yml -m "initial document" --if-match '<working_revision>'
+# Clone this repository into a directory named chronon, then:
+cd chronon
+pipx install .
+chronon version
 ```
 
-초기화하면 `.chronon/config.toml`과 `.chronon/resources/`가 생기며 `.gitignore`에는 `/.chronon/`이 추가됩니다. 다시 같은 명령을 실행해도 기존 이력을 덮어쓰지 않습니다.
-
-`--mode auto`는 현재 명확한 `not_implemented` 오류를 반환합니다.
-
-## git 대응 명령
+Fedora:
 
 ```bash
-# git add: 파일 추적 시작. staged copy는 만들지 않습니다.
-chronon add docs.yml
-
-# git commit: 현재 파일 한 개를 불변 snapshot으로 기록합니다.
-chronon commit docs.yml -m "raise web port" --if-match '<working_revision>'
-
-# git diff: 마지막 커밋과 작업본 비교
-chronon diff docs.yml
-
-# 날짜/커밋끼리 비교
-chronon diff docs.yml --from 2026-08-01 --to working
-chronon diff docs.yml --from 1 --to 2 --format both
-
-# git log
-chronon log docs.yml
-
-# git status. 인자 생략 시 전체 파일
-chronon status
-chronon status docs.yml
+sudo dnf install pipx
+pipx ensurepath
+# Clone this repository into a directory named chronon, then:
+cd chronon
+pipx install .
+chronon version
 ```
 
-`status`는 각 파일의 상태와 함께 `commits=<이력 개수>`, `last=<마지막 커밋 UTC 시각>`을 표시합니다. 첫 커밋 전에는 `commits=0`, `last=-`입니다.
+Do not install into an OS-managed Python with `sudo pip`. On distributions that
+enforce PEP 668, use the distribution's pipx package or the alternatives in the
+[official pipx instructions](https://pipx.pypa.io/latest/how-to/install-pipx.html).
 
-Chronon에는 staged 영역이 없습니다. `add`는 추적 시작이고, `commit`은 호출 시점의 작업본을 바로 기록합니다. 커밋은 항상 파일 하나 단위이며 message가 필수입니다.
+### WSL2
 
-## 파일 이동과 복사
-
-추적되는 파일은 각자 고유한 불투명 `id`(128비트 hex)를 가집니다. `add`할 때 한 번 부여되고 이후 이름을 바꿔도 유지됩니다. `id`가 없던 이전 저장소는 파일을 처음 다룰 때 자동으로 채워집니다. `chronon status <파일>`에 `id=...`로 표시됩니다.
+Use the Linux instructions inside WSL, even if Python or pipx is also installed
+on Windows. Keep the Chronon installation and active vault on the same side of
+the Windows/WSL boundary. For the best filesystem behavior and performance, a
+path below the WSL home directory (for example `~/vaults/notes`) is preferable
+to `/mnt/c/...`.
 
 ```bash
-# git mv: 이력과 id를 그대로 유지한 채 경로만 바꿉니다.
-chronon mv docs.yml config/web.yml
-
-# cp: 새 경로에 독립된 리소스로 복사합니다. 새 id가 생기고 이력은 revision 0부터
-#     다시 시작합니다(스냅샷 가지치기 없음). descriptor의 copied_from에 원본의 id와
-#     복사 시점의 원본 revision(working_revision·seq·content_hash)이 기록됩니다.
-chronon cp config/web.yml config/web.backup.yml
+sudo apt update
+sudo apt install pipx
+pipx ensurepath
+# Clone this repository into a directory named chronon, then:
+cd chronon
+pipx install .
+chronon version
 ```
 
-`mv`와 `cp` 모두 대상 경로에 파일이 이미 있거나 이미 추적 중이면 거부하며, 원본은 그대로 둡니다. `mv`는 작업본 파일과 `.chronon/` 메타데이터(이력·스키마)를 함께 옮깁니다. 이동 후 옛 경로는 더 이상 추적되지 않습니다.
+### Windows (PowerShell)
 
-경로 변경 자체도 이력입니다. `mv`는 descriptor의 `path_log`(경로별 적용 시각)에 항목을 추가하고, `chronon diff`는 두 시점의 경로가 다르면 `path_change`(사람용 출력에서는 `renamed: 옛경로 -> 새경로`)를 함께 보고합니다.
+Install Python 3.11+ from [python.org](https://www.python.org/downloads/windows/)
+and enable the installer option that makes the Python launcher available. Then:
 
-```bash
-chronon mv docs.yml config/web.yml
-chronon diff config/web.yml                    # renamed: docs.yml -> config/web.yml
-chronon diff config/web.yml --from 1 --to working   # 이름 변경 + 값 변경을 함께
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+# Close and reopen PowerShell after ensurepath.
+
+# Clone this repository into a directory named chronon, then:
+Set-Location chronon
+pipx install .
+chronon version
 ```
 
-## 조회와 편집
+If `pipx` is still not found after reopening PowerShell, follow the PATH step in
+the [official Windows pipx instructions](https://pipx.pypa.io/latest/how-to/install-pipx.html#windows).
+
+### PyPI installation after a release
+
+Once `chronon-vcs` has been published to PyPI, installation becomes:
 
 ```bash
-# 셸의 ls/cat처럼 Chronon이 관리하는 파일을 탐색하고 읽기
-chronon-ls .
-chronon-ls nested --json
-chronon-cat docs.yml
-chronon-cat docs.yml --at latest~1
-chronon-write notes/new.txt --content "first note" --scratch
-chronon-cat notes/new.txt --json             # working_revision 확인
-printf 'updated note\n' | chronon-write notes/new.txt --stdin \
-  --if-match '<working_revision>' -m "update note"
-
-chronon read docs.yml
-chronon show docs.yml latest~1
-chronon path-history docs.yml servers.web.port
-
-chronon set docs.yml --path servers.web.port --value 9090 --type int
-chronon-cat docs.yml --json
-chronon commit docs.yml -m "move web service to 9090" \
-  --if-match '<working_revision>'
-
-# 원샷 수정 + 커밋
-chronon set docs.yml --path enabled --value true --type bool -m "enable service"
-
-chronon rollback docs.yml 1 -m "restore initial document"
+pipx install chronon-vcs
 ```
 
-`chronon-ls [디렉터리]`는 일반 `ls`처럼 해당 디렉터리의 바로 아래 항목만
-표시합니다. Chronon이 추적하지 않는 파일은 보이지 않으며, 더 아래에 추적 파일이
-있는 디렉터리는 이름 뒤에 `/`가 붙습니다. `chronon-cat`은 기본적으로 working
-revision을 읽고, `--at`에 Chronon revspec을 지정하면 과거 snapshot을 읽습니다.
-두 명령은 파일 내용을 읽기 위해 별도로 파일시스템 API를 사용할 필요 없이 Chronon의
-operation layer를 통합니다.
+This repository is not published by the setup in this branch. Creating a GitHub
+repository or publishing a package remains a separate, deliberate release step.
 
-`chronon-write <파일>`은 경로가 없으면 파일을 만들고 즉시 추적을 시작하며, 이미
-Chronon이 추적하는 파일이면 작업본을 갱신합니다. 기존에 존재하지만 추적되지 않은
-파일은 실수로 덮어쓰지 않습니다. 내용은 `--content` 또는 `--stdin` 중 하나로
-전달하고, 저장 방식은 `--scratch` 또는 `--message/-m` 중 하나를 반드시 선택합니다.
+## Quick start
 
-scratch는 별도 파일이 아니라 Chronon working copy입니다. `chronon-cat --json`이
-반환하는 opaque `working_revision`을 다음 `chronon-write --if-match`에 전달해야
-scratch를 다시 쓰거나 최종 커밋할 수 있습니다. 다른 쓰기가 먼저 일어나면
-`revision_conflict`로 거부되며 파일은 바뀌지 않습니다. 현재 scratch를 그대로
-커밋하려면 `chronon-commit ... --if-match <working_revision> -m "..."`을 사용합니다.
-`chronon-ls -l`은 `dirty`와 첫 커밋 전 상태를 `scratch`로 표시합니다.
-
-지원 revspec은 `1`, `latest`, `latest~N`, `working`, `YYYY-MM-DD`, timezone이 포함된 ISO 8601 timestamp, `7d ago`, `3h ago`, `30m ago`입니다. 날짜만 쓰면 해당 날짜의 UTC 00:00 기준입니다.
-
-YAML과 JSON은 기본적으로 구조적 diff를 사용합니다. 키 순서나 들여쓰기만 달라진 경우 변화로 표시하지 않습니다. 그 밖의 UTF-8 텍스트 파일은 unified diff를 사용합니다.
-
-## 외부 편집과 git 병행
-
-Chronon을 거치지 않은 변경은 마지막 Chronon 쓰기와 구분되어 `foreign` 상태가 됩니다.
+Initialize a directory and register a global name for it in one operation:
 
 ```bash
-chronon status docs.yml
-chronon accept docs.yml                    # 외부 내용을 dirty 기준선으로 인정
-chronon-cat docs.yml --json
-chronon commit docs.yml -m "accept upstream configuration" \
-  --if-match '<working_revision>'
-
-chronon discard docs.yml                   # Chronon 변경 폐기
-chronon discard docs.yml --force           # 외부 변경도 폐기하므로 주의
+mkdir -p "$HOME/Documents/my-notes"
+chronon init "$HOME/Documents/my-notes" --register notes
 ```
 
-## vault — 이름으로 저장소 찾기
+On PowerShell:
 
-`cd` 없이 이름 하나로 저장소를 가리키고 싶을 때 씁니다. 등록은 사용자 전역(`~/.config/chronon/vaults.toml`)이라 어느 디렉터리에서 실행하든 동작합니다.
+```powershell
+New-Item -ItemType Directory -Force "$HOME\Documents\my-notes"
+chronon init "$HOME\Documents\my-notes" --register notes
+```
+
+Create a file using any editor, start tracking it, observe its revision token,
+and make the first commit:
 
 ```bash
-chronon add-vault myvault ./my-project     # 이미 init된 디렉터리를 등록
-chronon init ./my-project --register myvault   # init과 동시에 등록
+printf 'title: First note\nstatus: draft\n' > "$HOME/Documents/my-notes/note.yml"
+chronon --vault notes add note.yml
+chronon --vault notes status note.yml --json
+chronon --vault notes commit note.yml \
+  --message "add first note" \
+  --if-match '<working_revision from status>'
+```
+
+PowerShell equivalent for the file creation step:
+
+```powershell
+@"
+title: First note
+status: draft
+"@ | Set-Content -Encoding utf8 "$HOME\Documents\my-notes\note.yml"
+```
+
+The `working_revision` value is an opaque compare-and-swap token. Passing it to
+`--if-match` prevents a person or another agent from overwriting content that
+changed after it was read.
+
+## Working from a different directory
+
+Vault registration is designed for this case. The initialization target does
+not have to be the current directory:
+
+```bash
+cd "$HOME/work/client-app"
+
+# Initialize a separate directory, register it as "knowledge", and create
+# AI guidance there, without leaving client-app.
+chronon init "$HOME/Documents/team-knowledge" \
+  --register knowledge \
+  --agents-md
 
 chronon list-vaults
-chronon remove-vault myvault               # 레지스트리에서만 제거, 저장소는 그대로
-
-# 어디서든 이름으로 접근
-chronon --vault myvault status
-chronon --vault myvault diff docs.yml --from 2026-08-01
-# 짧게는 -v
-chronon -v myvault status docs.yml
+chronon --vault knowledge status
+chronon --vault knowledge ls -l
 ```
 
-`--vault`/`-v`는 최상위 전역 옵션이므로 명령어 앞에 둡니다. 생략하면 현재 디렉터리에서 저장소 루트를 찾습니다.
-
-## 에이전트 문서 (MCP 없이)
-
-MCP 서버를 등록하지 않아도, 저장소 루트의 마크다운 문서에 Chronon CLI 사용법을 적어두면 코딩 에이전트가 그대로 읽습니다.
+The global `--vault`/`-v` option goes before the subcommand:
 
 ```bash
-chronon agents-md                 # 기본값: CHRONON.md 생성/갱신
-chronon agents-md AGENTS.md       # 파일 이름 지정 (CLAUDE.md 등도 가능)
-chronon init --agents-md          # init과 함께 CHRONON.md 작성
-chronon init --agents-md-file AGENTS.md
+chronon --vault knowledge diff architecture.yml
+chronon -v knowledge log architecture.yml
 ```
 
-`<!-- chronon:agents-md:begin -->` ~ `<!-- chronon:agents-md:end -->` 구간만 갱신하므로, 직접 작성한 나머지 내용은 재실행해도 보존됩니다.
+The standalone shell-style commands accept `--vault` directly:
 
-## MCP
+```bash
+chronon-ls --vault knowledge .
+chronon-cat --vault knowledge architecture.yml
+```
 
-`chronon-mcp`는 stdio MCP 서버를 실행합니다. CLI와 동일한 operation layer를 사용하며 `add_resource`, `move_resource`, `copy_resource`, `read_resource`, `diff_resource`, `history_resource`, `commit_resource`, `write_resource`, `status_resource`, `path_history`, `rollback_resource` 등을 제공합니다.
+Without a vault option, Chronon searches upward from the current directory for
+the nearest `.chronon/config.toml`, similar to Git repository discovery.
 
-MCP 서버의 작업 디렉터리는 초기화된 프로젝트 내부여야 합니다.
+### Vault registry location
+
+Vault names are per-user, not stored inside a vault:
+
+- Windows: `%APPDATA%\chronon\vaults.toml`
+- Linux, WSL, and macOS: `$XDG_CONFIG_HOME/chronon/vaults.toml` when
+  `XDG_CONFIG_HOME` is set, otherwise `~/.config/chronon/vaults.toml`
+
+Set `CHRONON_CONFIG_HOME` to override the directory on any platform. This is
+also useful for isolated tests and automation.
+
+```bash
+chronon add-vault work /absolute/path/to/an/initialized/repository
+chronon list-vaults
+chronon remove-vault work  # removes only the name; files and history remain
+```
+
+## Everyday CLI workflow
+
+### Track and commit an existing file
+
+```bash
+chronon add config.yml
+chronon status config.yml --json
+chronon commit config.yml -m "track initial configuration" \
+  --if-match '<working_revision>'
+```
+
+`add` begins tracking; there is no staging area. A commit snapshots exactly one
+file and always requires a message. The state name `untracked` is retained for
+compatibility and means “tracked by Chronon but with zero commits,” not that
+`add` failed.
+
+### Make a structured change
+
+```bash
+chronon status config.yml --json
+chronon set config.yml \
+  --path servers.web.port \
+  --value 9090 \
+  --type int \
+  --message "move web service to port 9090" \
+  --if-match '<working_revision>'
+
+chronon diff config.yml --from latest~1 --to latest
+chronon path-history config.yml servers.web.port
+```
+
+Supported value types are inferred as YAML by default, or can be selected with
+`--type str|int|float|bool|null|json`. `set` and `unset` work on YAML and JSON.
+
+### Replace complete content
+
+For a tracked file, provide exactly one content source:
+
+```bash
+chronon write note.md --content '# New text' -m "replace note"
+chronon write note.md --file prepared-note.md -m "replace from prepared file"
+printf '# Generated text\n' | chronon write note.md --stdin -m "replace note"
+```
+
+When the current state is `dirty`, include the revision returned by the preceding
+read or status:
+
+```bash
+revision=$(chronon status note.md --json | python -c \
+  'import json,sys; print(json.load(sys.stdin)["working_revision"])')
+printf '# Final text\n' | chronon write note.md --stdin -m "finish note" \
+  --if-match "$revision"
+```
+
+To create a missing path and track it in one operation, use the agent-friendly
+standalone command:
+
+```bash
+printf 'first line\n' | chronon-write notes/new.txt --stdin --scratch
+chronon-cat notes/new.txt --json
+chronon-commit notes/new.txt -m "add note" --if-match '<working_revision>'
+```
+
+`chronon-write` refuses to overwrite an existing untracked path.
+
+### Normal editor and external changes
+
+An edit made outside Chronon is reported as `foreign`. The content is not lost
+or automatically accepted.
+
+To commit exactly the external content you inspected:
+
+```bash
+chronon status config.yml --json
+chronon validate config.yml
+chronon commit config.yml -m "accept reviewed editor change" \
+  --if-match '<working_revision>'
+```
+
+To accept it as an uncommitted Chronon baseline and continue editing:
+
+```bash
+chronon accept config.yml --if-match '<working_revision>'
+chronon status config.yml --json  # read the new token before another write
+```
+
+To discard changes and restore the latest commit:
+
+```bash
+chronon discard config.yml --if-match '<working_revision>'
+chronon discard config.yml --force --if-match '<working_revision>'  # foreign too
+```
+
+`--force` may destroy an external edit. A supplied revision is always checked.
+
+### Move, copy, inspect, and restore
+
+```bash
+chronon mv docs.yml config/web.yml
+chronon cp config/web.yml config/web.example.yml
+
+chronon log config/web.yml
+chronon show config/web.yml 1
+chronon diff config/web.yml --from 1 --to working --format both
+chronon rollback config/web.yml 1 -m "restore original settings" \
+  --if-match '<working_revision>'
+```
+
+- `mv` preserves the resource ID, full history, path timeline, and schema.
+- `cp` creates a new resource ID and empty history, while recording its origin.
+- `rollback` restores old content as a new commit; it does not rewrite history.
+- If a tracked working file is deleted, `status` reports `missing` and `discard`
+  can restore its latest committed content.
+
+### Revisions and diffs
+
+Accepted revision specifications:
+
+```text
+1
+working
+latest
+latest~3
+2026-08-01
+2026-08-01T13:30:00+09:00
+7d ago
+3h ago
+30m ago
+```
+
+A date without a time means UTC midnight. YAML and JSON use structural diff by
+default, so key ordering and indentation-only changes disappear. Other text
+files use a unified text diff. `--format` accepts `auto`, `structural`, `text`,
+or `both`.
+
+### Validation with JSON Schema
+
+```bash
+chronon schema-register config.json --file config.schema.json
+chronon validate config.json
+```
+
+The schema itself must be valid JSON Schema 2020-12, and registration fails if
+the current document does not satisfy it. Future Chronon writes are validated
+before the working file is replaced.
+
+## CLI command reference
+
+Run `chronon COMMAND --help` for every option.
+
+| Command | Purpose |
+|---|---|
+| `init [DIR]` | Initialize a manual repository; optionally register a vault and generate agent guidance |
+| `add FILE...` | Start tracking existing files |
+| `status [FILE]` | Show one or all states: `untracked`, `clean`, `dirty`, `foreign`, `missing` |
+| `list` | List all tracked resources and states |
+| `ls [DIR]` | List immediate tracked children |
+| `read FILE` | Read working or historical content |
+| `show FILE REV` | Read one historical revision |
+| `write FILE` | Replace an existing tracked working copy, optionally committing it |
+| `commit FILE` | Commit exactly one working copy |
+| `set FILE` / `unset FILE` | Change a YAML/JSON path |
+| `diff FILE` | Compare two revisions |
+| `log FILE` | List immutable commits, newest first |
+| `path-history FILE PATH` | Show commits that changed one structured value |
+| `mv SRC DST` | Rename while preserving identity and history |
+| `cp SRC DST` | Copy into a new independent resource |
+| `rollback FILE REV` | Restore a revision as a new commit |
+| `discard FILE` | Restore the latest committed content |
+| `accept FILE` | Accept a foreign edit as the current dirty baseline |
+| `schema-register FILE` | Attach a JSON Schema |
+| `validate FILE` | Validate current content |
+| `agents-md [NAME]` | Create or refresh AI CLI guidance |
+| `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
+| `version` | Print the installed version |
+
+Add `--json` for machine-readable output. Domain errors also become JSON and
+include a stable `error` code. Common exit codes are: `3` for repository/file
+lookup, `4` for invalid arguments, `5` for nothing to commit, `6` for protected
+foreign changes, `7` for a missing/stale precondition, and `8` when no state
+exists at a requested revision.
+
+## Using Chronon with an AI through `CHRONON.md`
+
+Generate the file during initialization or later:
+
+```bash
+chronon init "$HOME/Documents/team-knowledge" \
+  --register knowledge \
+  --agents-md
+
+# Equivalent later command:
+chronon --vault knowledge agents-md
+```
+
+The generated section explains safe reads, revision preconditions, commits,
+structured edits, and vault selection. It is bounded by these markers:
+
+```html
+<!-- chronon:agents-md:begin -->
+<!-- chronon:agents-md:end -->
+```
+
+Re-running `agents-md` updates only that section and preserves everything else
+in the file. You can prepend project-specific instructions, for example:
+
+```markdown
+# Knowledge vault instructions
+
+- Preserve the existing document language and headings.
+- Validate YAML before committing it.
+- Use concise commit messages that describe the content change.
+```
+
+Whether an AI reads `CHRONON.md` automatically depends on the client. Start the
+agent in the vault directory, attach the file, or name its absolute path in the
+prompt. A complete prompt from another directory can be:
+
+```text
+First read ~/Documents/team-knowledge/CHRONON.md and follow it. Work in the
+registered Chronon vault named "knowledge". Inspect architecture.yml, update the
+web port to 9090, validate it, review the diff, and commit the change with a
+concise message. If a decision is not material, use your recommended default and
+record the assumption in decisions.md.
+```
+
+A well-behaved CLI agent should follow this sequence:
+
+1. Read `status --json` or `read --json` and retain `working_revision`.
+2. Make the smallest valid change.
+3. Pass the retained token as `--if-match` on mutation.
+4. Inspect `diff` and `validate`.
+5. Commit with a meaningful message; never leave important work only as scratch.
+6. On `revision_conflict`, re-read and reconcile instead of retrying blindly.
+
+For clients that automatically read another filename, write the same managed
+section there:
+
+```bash
+chronon --vault knowledge agents-md AGENTS.md
+chronon --vault knowledge agents-md CLAUDE.md
+```
+
+## Using Chronon with an AI through MCP
+
+`chronon-mcp` is a local stdio MCP server. The MCP host launches it as a child
+process; it is not a web service and should not be started in a terminal for
+interactive use. A generic client configuration is:
+
+```json
+{
+  "mcpServers": {
+    "chronon": {
+      "command": "/absolute/path/to/chronon-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Find the executable after pipx installation:
+
+```bash
+command -v chronon-mcp
+```
+
+```powershell
+(Get-Command chronon-mcp).Source
+```
+
+An absolute command path is recommended for GUI clients, which often inherit a
+smaller `PATH` than a terminal. Each repository tool accepts an optional `vault`
+name, so one server can work with registered vaults regardless of its startup
+directory.
+
+The MCP surface supports the full working flow:
+
+- setup: `initialize_repository`, `list_vaults`, `add_vault`, `remove_vault`,
+  `write_agent_instructions`;
+- discovery/read: `list_resources`, `list_directory`, `status_resource`,
+  `read_resource`, `diff_resource`, `history_resource`, `path_history`;
+- write: `put_resource`, `add_resource`, `write_resource`, `set_value`,
+  `unset_value`, `commit_resource`, `move_resource`, `copy_resource`;
+- recovery/validation: `rollback_resource`, `discard_changes`,
+  `accept_foreign`, `validate_resource`, `register_schema`.
+
+MCP tools return domain failures as structured objects with an `error` field.
+Agents should treat that field as failure even when the MCP transport call itself
+succeeds. For concurrent safety, read first and pass `working_revision` as
+`expected_revision` on later mutations.
+
+The default stdio behavior follows the
+[official MCP Python SDK transport guidance](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/run/index.md).
+
+## Data and backups
+
+Initialization creates:
+
+```text
+.chronon/
+├── config.toml
+├── locks/
+├── resources/        # descriptor, state, commit index, immutable snapshots
+└── schemas/
+```
+
+Chronon adds `/.chronon/` to the vault's `.gitignore`. Therefore Chronon history
+is local by default and is **not** pushed with the surrounding Git repository.
+Back up the working files and their `.chronon` directory together if the history
+matters. Chronon does not encrypt content; snapshots contain the same sensitive
+text as the working document.
+
+Resource writes are atomic, and per-resource operations plus vault-registry
+updates use inter-process locks on Windows, Linux, WSL, and macOS. A commit is
+file-scoped; there is no atomic multi-file transaction.
+
+## Development and tests
+
+Create an isolated environment from the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'
+```
+
+Run the same checks used by CI:
+
+```bash
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest --cov=chronon --cov-report=term-missing
+python -m pip_audit . --skip-editable
+python -m build
+python -m twine check dist/*
+```
+
+The GitHub Actions workflow tests Python 3.11–3.14, including native Windows and
+macOS jobs, enforces branch-aware coverage, checks formatting and dependencies,
+tests the declared minimum dependency versions, builds both wheel and source
+distributions, and installs the built wheel for a smoke test. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the test layout.
+
+## License
+
+[MIT](LICENSE)

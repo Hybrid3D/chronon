@@ -46,9 +46,7 @@ def test_add_assigns_a_stable_id(repository: ChrononRepository) -> None:
 def test_legacy_descriptor_without_id_is_backfilled(
     repository: ChrononRepository,
 ) -> None:
-    descriptor_path = (
-        repository.root / ".chronon/resources/docs.yml/resource.json"
-    )
+    descriptor_path = repository.root / ".chronon/resources/docs.yml/resource.json"
     descriptor_path.write_text(json.dumps({"resource": "docs.yml"}), encoding="utf-8")
 
     fresh = ChrononRepository(repository.root)
@@ -83,7 +81,9 @@ def test_move_preserves_history_and_id(repository: ChrononRepository) -> None:
         "initial",
     ]
     descriptor = json.loads(
-        (repository.root / ".chronon/resources/config/web.yml/resource.json").read_text()
+        (
+            repository.root / ".chronon/resources/config/web.yml/resource.json"
+        ).read_text()
     )
     paths = [entry["path"] for entry in descriptor["path_log"]]
     assert paths == ["docs.yml", "config/web.yml"]
@@ -200,20 +200,12 @@ def test_move_and_copy_carry_the_schema(repository: ChrononRepository) -> None:
     )
 
     repository.move("docs.yml", "moved.yml")
-    assert (
-        repository.root / ".chronon/schemas/moved.yml.schema.json"
-    ).is_file()
-    assert not (
-        repository.root / ".chronon/schemas/docs.yml.schema.json"
-    ).is_file()
+    assert (repository.root / ".chronon/schemas/moved.yml.schema.json").is_file()
+    assert not (repository.root / ".chronon/schemas/docs.yml.schema.json").is_file()
 
     repository.copy("moved.yml", "copied.yml")
-    assert (
-        repository.root / ".chronon/schemas/copied.yml.schema.json"
-    ).is_file()
-    assert (
-        repository.root / ".chronon/schemas/moved.yml.schema.json"
-    ).is_file()
+    assert (repository.root / ".chronon/schemas/copied.yml.schema.json").is_file()
+    assert (repository.root / ".chronon/schemas/moved.yml.schema.json").is_file()
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -224,12 +216,15 @@ def test_cli_mv_and_cp(tmp_path: Path, monkeypatch) -> None:
     assert runner.invoke(app, ["init", "."]).exit_code == 0
     (tmp_path / "a.yml").write_text("k: 1\n", encoding="utf-8")
     assert runner.invoke(app, ["add", "a.yml"]).exit_code == 0
-    revision = json.loads(
-        runner.invoke(app, ["read", "a.yml", "--json"]).output
-    )["working_revision"]
-    assert runner.invoke(
-        app, ["commit", "a.yml", "-m", "init", "--if-match", revision]
-    ).exit_code == 0
+    revision = json.loads(runner.invoke(app, ["read", "a.yml", "--json"]).output)[
+        "working_revision"
+    ]
+    assert (
+        runner.invoke(
+            app, ["commit", "a.yml", "-m", "init", "--if-match", revision]
+        ).exit_code
+        == 0
+    )
 
     moved = runner.invoke(app, ["mv", "a.yml", "b.yml"])
     assert moved.exit_code == 0, moved.output

@@ -17,7 +17,7 @@ from chronon.api.operations import (
     list_vaults,
     remove_vault,
 )
-from chronon.core.errors import ChrononError
+from chronon.core.errors import ChrononError, InvalidArgument
 
 app = typer.Typer(
     no_args_is_help=True, help="Document-oriented local history indexed by time."
@@ -50,9 +50,7 @@ VAULT_OPTION = typer.Option(
     "-v",
     help=VAULT_HELP,
 )
-_ACTIVE_VAULT: ContextVar[str | None] = ContextVar(
-    "chronon_active_vault", default=None
-)
+_ACTIVE_VAULT: ContextVar[str | None] = ContextVar("chronon_active_vault", default=None)
 
 
 @app.callback()
@@ -109,6 +107,9 @@ def _emit(value: Any, json_output: bool = False) -> None:
         agents_md = value.get("agents_md")
         if agents_md:
             _echo_agents_md_result(agents_md)
+        vault = value.get("vault")
+        if vault:
+            typer.echo(f"Registered vault {vault['name']} -> {vault['path']}")
     elif "commit" in value:
         commit = value["commit"]
         typer.echo(f"[{value['resource']} {commit['seq']}] {commit['message']}")
@@ -173,7 +174,9 @@ def _emit(value: Any, json_output: bool = False) -> None:
                 )
                 count = entry.get("history_count", 0)
                 when = _format_commit_time(entry.get("latest_commit_at"))
-                typer.echo(f"{state:<9} {count:>3}  {when:<16}  {entry['name']}{suffix}")
+                typer.echo(
+                    f"{state:<9} {count:>3}  {when:<16}  {entry['name']}{suffix}"
+                )
             else:
                 typer.echo(f"{entry['name']}{suffix}")
     elif "state" in value and "resource" in value:
@@ -216,10 +219,30 @@ def _run(action: Any, json_output: bool = False) -> None:
                 typer.echo(f"  {key}: {value}", err=True)
         raise typer.Exit(exc.exit_code) from exc
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        typer.echo(f"chronon: {exc}", err=True)
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"error": "invalid_argument", "message": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                err=True,
+            )
+        else:
+            typer.echo(f"chronon: {exc}", err=True)
         raise typer.Exit(4) from exc
     except OSError as exc:
-        typer.echo(f"chronon: {exc}", err=True)
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"error": "file_error", "message": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                err=True,
+            )
+        else:
+            typer.echo(f"chronon: {exc}", err=True)
         raise typer.Exit(3) from exc
 
 
@@ -246,14 +269,15 @@ def init_command(
         None,
         "--agents-md-file",
         metavar="NAME",
-        help="With --agents-md, use NAME instead of CHRONON.md (e.g. AGENTS.md).",
+        help=(
+            "Write/update NAME instead of CHRONON.md (e.g. AGENTS.md); "
+            "implies --agents-md."
+        ),
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: init_repository(
-            directory, mode, register, agents_md_file or agents_md
-        ),
+        lambda: init_repository(directory, mode, register, agents_md_file or agents_md),
         json_output,
     )
 
@@ -425,9 +449,7 @@ def status(
 def list_command(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _run(
-        lambda: ChrononRepository(vault=_active_vault()).list_resources(), json_output
-    )
+    _run(lambda: ChrononRepository(vault=_active_vault()).list_resources(), json_output)
 
 
 @app.command("read")
@@ -456,9 +478,7 @@ def _list_directory(
 ) -> None:
     def action() -> dict[str, Any]:
         if vault:
-            return ChrononRepository(vault=vault).list_directory(
-                directory, long_output
-            )
+            return ChrononRepository(vault=vault).list_directory(directory, long_output)
         target = directory.resolve()
         return ChrononRepository(target).list_directory(target, long_output)
 
@@ -531,16 +551,14 @@ def chronon_write(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Create or update a tracked UTF-8 text file."""
-    sources = int(content is not None) + int(stdin)
-    if sources != 1:
-        typer.echo("chronon: choose exactly one of --content or --stdin", err=True)
-        raise typer.Exit(4)
-    modes = int(scratch) + int(message is not None)
-    if modes != 1:
-        typer.echo("chronon: choose exactly one of --scratch or --message", err=True)
-        raise typer.Exit(4)
 
     def action() -> dict[str, Any]:
+        sources = int(content is not None) + int(stdin)
+        if sources != 1:
+            raise InvalidArgument("choose exactly one of --content or --stdin")
+        modes = int(scratch) + int(message is not None)
+        if modes != 1:
+            raise InvalidArgument("choose exactly one of --scratch or --message")
         target = resource if vault else resource.resolve()
         value = sys.stdin.read() if stdin else content or ""
         return ChrononRepository(None if vault else target, vault=vault).put(
@@ -599,16 +617,12 @@ def write(
     expected_revision: str | None = typer.Option(None, "--if-match"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    sources = sum(
-        item is not None and item is not False for item in (content, file, stdin)
-    )
-    if sources != 1:
-        typer.echo(
-            "chronon: choose exactly one of --content, --file, or --stdin", err=True
-        )
-        raise typer.Exit(4)
-
     def action() -> dict[str, Any]:
+        sources = sum(
+            item is not None and item is not False for item in (content, file, stdin)
+        )
+        if sources != 1:
+            raise InvalidArgument("choose exactly one of --content, --file, or --stdin")
         if file is not None:
             value = file.read_text(encoding="utf-8")
         elif stdin:
@@ -709,10 +723,13 @@ def discard(
 @app.command("accept")
 def accept_command(
     resource: Path,
+    expected_revision: str | None = typer.Option(None, "--if-match"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=_active_vault()).accept_foreign(resource),
+        lambda: ChrononRepository(vault=_active_vault()).accept_foreign(
+            resource, expected_revision
+        ),
         json_output,
     )
 

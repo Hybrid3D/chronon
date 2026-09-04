@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,14 +33,32 @@ class Commit:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Commit:
-        return cls(
-            seq=int(value["seq"]),
-            timestamp=str(value["timestamp"]),
-            author=str(value.get("author") or "unknown"),
-            message=str(value["message"]),
-            content_hash=str(value["content_hash"]),
-            file=str(value["file"]),
-        )
+        seq = value["seq"]
+        timestamp = value["timestamp"]
+        author = value.get("author") or "unknown"
+        message = value["message"]
+        digest = value["content_hash"]
+        filename = value["file"]
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+            raise ValueError("invalid commit sequence")
+        if not all(
+            isinstance(item, str)
+            for item in (timestamp, author, message, digest, filename)
+        ):
+            raise ValueError("invalid commit field type")
+        parsed_time = datetime.fromisoformat(timestamp)
+        if parsed_time.tzinfo is None:
+            raise ValueError("commit timestamp must include a timezone")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise ValueError("invalid content hash")
+        if (
+            not filename
+            or filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+        ):
+            raise ValueError("invalid snapshot filename")
+        return cls(seq, timestamp, author, message, digest, filename)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -122,9 +141,19 @@ def create_snapshot(
 
 
 def read_snapshot(store: Store, resource: str, commit: Commit) -> str:
-    path = store.resource_dir(resource) / commit.file
+    resource_directory = store.resource_dir(resource).resolve()
+    path = resource_directory / commit.file
     try:
-        content = path.read_text(encoding="utf-8")
+        resolved_path = path.resolve()
+        resolved_path.relative_to(resource_directory)
+    except (OSError, ValueError) as exc:
+        raise FileError(
+            "snapshot path escapes resource metadata",
+            resource=resource,
+            seq=commit.seq,
+        ) from exc
+    try:
+        content = resolved_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise FileError(
             "cannot read snapshot", resource=resource, seq=commit.seq

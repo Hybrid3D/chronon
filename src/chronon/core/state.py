@@ -14,9 +14,12 @@ def read_state_file(store: Store, resource: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise FileError("cannot read resource state", resource=resource) from exc
+    if not isinstance(value, dict):
+        raise FileError("resource state is malformed", resource=resource)
+    return value
 
 
 def update_state(
@@ -24,7 +27,14 @@ def update_state(
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
     previous = read_state_file(store, resource) or {}
-    generation = int(previous.get("working_generation", 0)) + 1
+    previous_generation = previous.get("working_generation", 0)
+    if (
+        not isinstance(previous_generation, int)
+        or isinstance(previous_generation, bool)
+        or previous_generation < 0
+    ):
+        raise FileError("resource state is malformed", resource=resource)
+    generation = previous_generation + 1
     value = {
         "last_written_hash": content_hash(content),
         "last_written_at": now,
@@ -47,8 +57,30 @@ def resource_state(store: Store, resource: str) -> dict[str, Any]:
     resource = store.require_tracked(resource)
     resource_id = store.ensure_resource_id(resource)
     working = store.working_path(resource)
+    commits = read_index(store, resource)
+    state_file = read_state_file(store, resource)
+    generation = (state_file or {}).get("working_generation", 0)
+    if (
+        not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or generation < 0
+    ):
+        raise FileError("resource state is malformed", resource=resource)
+    latest_hash = commits[-1].content_hash if commits else None
     if not working.is_file():
-        raise FileError("working copy does not exist", resource=resource)
+        return {
+            "resource": resource,
+            "id": resource_id,
+            "state": "missing",
+            "working_hash": None,
+            "working_generation": generation,
+            "working_revision": None,
+            "latest_hash": latest_hash,
+            "latest_seq": commits[-1].seq if commits else None,
+            "history_count": len(commits),
+            "latest_commit_at": commits[-1].timestamp if commits else None,
+            "mtime": None,
+        }
     try:
         content = working.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
@@ -56,10 +88,6 @@ def resource_state(store: Store, resource: str) -> dict[str, Any]:
             "working copy is not readable UTF-8 text", resource=resource
         ) from exc
     working_hash = content_hash(content)
-    commits = read_index(store, resource)
-    state_file = read_state_file(store, resource)
-    generation = int((state_file or {}).get("working_generation", 0))
-    latest_hash = commits[-1].content_hash if commits else None
     if not commits:
         state = "untracked"
     elif working_hash == latest_hash:

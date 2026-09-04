@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .errors import FileError, InvalidArgument
 from .store import atomic_write
 
 BEGIN_MARKER = "<!-- chronon:agents-md:begin -->"
@@ -53,9 +54,9 @@ It's a plain CLI; no MCP server needs to be configured to use it.
 > - Chronon commands and their `--json` output are for you to act on, then
 >   discard — like shell output, not like results to hand over.
 
-- A commit always needs `--message`. Nothing is saved to history automatically —
-  uncommitted edits sit in the working copy (`chronon status` calls this `dirty`)
-  until you commit them.
+- A commit always needs `--message`. Nothing is saved to history automatically.
+  A Chronon scratch edit is `dirty`; a normal editor or another program produces
+  `foreign`. Both are uncommitted until you explicitly commit them.
 - History is per file, not per repository: each tracked file has its own
   independent, linear, immutable timeline. There is no multi-file atomic commit.
 - For YAML/JSON, diffs are structural (`path: old -> new`), not line-based text.
@@ -64,6 +65,9 @@ It's a plain CLI; no MCP server needs to be configured to use it.
   history from revision 0) that records where it was copied from.
 - Prefer the one-shot `--message` forms below over separate save-then-commit —
   message cost is near zero for an agent, and it keeps history dense and useful.
+- Before mutating a tracked file, read it or run `status --json`, retain the opaque
+  `working_revision`, and pass it back as `--if-match`. On `revision_conflict`,
+  re-read and reconcile; never retry a stale overwrite blindly.
 
 Add `--json` to any command for machine-readable output.
 
@@ -84,10 +88,10 @@ Without `--vault`/`-v`, chronon finds the repository from the current directory.
 | Start tracking a file | `chronon add <path>` |
 | Rename a tracked file (keeps history) | `chronon mv <old> <new>` |
 | Copy a tracked file to a new path | `chronon cp <src> <dst>` |
-| Save + commit in one step | `chronon write <path> --file <path> --message "..."` |
+| Replace content + commit in one step | `chronon write <path> --stdin --message "..."` |
 | Change one value + commit | `chronon set <path> --path "a.b.c" --value X --message "..."` |
 | Commit an already-saved edit | `chronon commit <path> --message "..." --if-match <working_revision>` |
-| Current state | `chronon status <path>` (untracked / clean / dirty / foreign) |
+| Current state | `chronon status <path>` (untracked / clean / dirty / foreign / missing) |
 | Diff against a point in time | `chronon diff <path> --from 2026-08-01 --to working` |
 | Diff against N commits ago | `chronon diff <path> --from latest~3` |
 | Read past content | `chronon show <path> <rev>` |
@@ -95,7 +99,8 @@ Without `--vault`/`-v`, chronon finds the repository from the current directory.
 | Full commit log | `chronon log <path>` |
 | Discard uncommitted edits | `chronon discard <path>` |
 | Restore an old revision (as a new commit) | `chronon rollback <path> <rev> --message "..."` |
-| File changed outside chronon (e.g. `git pull`) | `chronon status <path>` shows `foreign`; then `chronon accept <path>` |
+| Commit an edit made by a normal editor | get `working_revision` from `chronon status <path> --json`, then `chronon commit <path> --message "..." --if-match <working_revision>` |
+| Keep editing an externally changed file through Chronon | get `working_revision`, then `chronon accept <path> --if-match <working_revision>`; read again before the next write |
 
 `<rev>` accepts an integer seq, `working`, `latest`, `latest~N`, an ISO date/timestamp,
 or a relative time like `"7d ago"`.
@@ -117,25 +122,47 @@ def ensure_agents_md(root: Path, filename: str = DEFAULT_AGENTS_MD) -> dict[str,
     """
     name = Path(filename).name
     if not name or name != filename:
-        raise ValueError(f"invalid agents-md filename: {filename!r}")
+        raise InvalidArgument("invalid agent instructions filename", filename=filename)
     path = root / name
     section = render_section()
 
     if not path.exists():
-        atomic_write(path, f"# {name}\n\n{section}\n")
+        try:
+            atomic_write(path, f"# {name}\n\n{section}\n")
+        except OSError as exc:
+            raise FileError("cannot write agent instructions", path=str(path)) from exc
         return {"path": str(path), "created": True, "updated": True}
 
-    existing = path.read_text(encoding="utf-8")
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise FileError("cannot read agent instructions", path=str(path)) from exc
     start = existing.find(BEGIN_MARKER)
     end = existing.find(END_MARKER)
+    marker_counts = (existing.count(BEGIN_MARKER), existing.count(END_MARKER))
+    if marker_counts not in {(0, 0), (1, 1)} or (
+        start != -1 and end != -1 and end < start
+    ):
+        raise InvalidArgument(
+            "agent instructions contain malformed chronon markers",
+            path=str(path),
+            hint="repair or remove the chronon marker block, then retry",
+        )
     if start != -1 and end != -1:
         end += len(END_MARKER)
         updated = existing[:start] + section + existing[end:]
     else:
-        separator = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+        separator = (
+            ""
+            if existing.endswith("\n\n")
+            else ("\n" if existing.endswith("\n") else "\n\n")
+        )
         updated = existing + separator + section + "\n"
 
     if updated == existing:
         return {"path": str(path), "created": False, "updated": False}
-    atomic_write(path, updated)
+    try:
+        atomic_write(path, updated)
+    except OSError as exc:
+        raise FileError("cannot write agent instructions", path=str(path)) from exc
     return {"path": str(path), "created": False, "updated": True}

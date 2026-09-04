@@ -13,14 +13,17 @@ about. Nothing here mutates repository state; it only resolves a name to a path.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
 
 from .errors import FileError, InvalidArgument
+from .lock import exclusive_file_lock
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
@@ -29,6 +32,14 @@ def config_home() -> Path:
     override = os.environ.get("CHRONON_CONFIG_HOME")
     if override:
         return Path(override).expanduser()
+    if sys.platform == "win32":
+        windows_home = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        if windows_home:
+            return Path(windows_home) / "chronon"
+        return Path.home() / "AppData" / "Roaming" / "chronon"
+    xdg_home = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_home:
+        return Path(xdg_home).expanduser() / "chronon"
     return Path.home() / ".config" / "chronon"
 
 
@@ -64,7 +75,12 @@ def _load() -> dict[str, str]:
     vaults = data.get("vaults", {})
     if not isinstance(vaults, dict):
         raise FileError("vault registry is invalid", path=str(path))
-    return {str(name): str(value) for name, value in vaults.items()}
+    if not all(
+        isinstance(name, str) and isinstance(value, str)
+        for name, value in vaults.items()
+    ):
+        raise FileError("vault registry is invalid", path=str(path))
+    return dict(vaults)
 
 
 def _save(vaults: dict[str, str]) -> None:
@@ -73,13 +89,14 @@ def _save(vaults: dict[str, str]) -> None:
         "[vaults]",
     ]
     for name in sorted(vaults):
-        escaped = vaults[name].replace("\\", "\\\\").replace('"', '\\"')
-        lines.append(f'"{name}" = "{escaped}"')
+        lines.append(
+            f"{json.dumps(name)} = {json.dumps(vaults[name], ensure_ascii=False)}"
+        )
     _atomic_write(registry_path(), "\n".join(lines) + "\n")
 
 
 def _validate_name(name: str) -> None:
-    if not _NAME_RE.match(name):
+    if not _NAME_RE.fullmatch(name):
         raise InvalidArgument(
             "vault name must start with a letter or digit and contain only "
             "letters, digits, '-', or '_'",
@@ -101,21 +118,23 @@ def add_vault(name: str, path: str | Path) -> dict[str, Any]:
             path=str(resolved),
             hint="run 'chronon init' there first, or pass the repository root",
         )
-    vaults = _load()
-    created = name not in vaults
-    vaults[name] = str(resolved)
-    _save(vaults)
+    with exclusive_file_lock(config_home() / "vaults.lock"):
+        vaults = _load()
+        created = name not in vaults
+        vaults[name] = str(resolved)
+        _save(vaults)
     return {"name": name, "path": str(resolved), "created": created}
 
 
 def remove_vault(name: str) -> dict[str, Any]:
-    vaults = _load()
-    if name not in vaults:
-        raise InvalidArgument(
-            "no such vault", name=name, hint="run 'chronon list-vaults'"
-        )
-    del vaults[name]
-    _save(vaults)
+    with exclusive_file_lock(config_home() / "vaults.lock"):
+        vaults = _load()
+        if name not in vaults:
+            raise InvalidArgument(
+                "no such vault", name=name, hint="run 'chronon list-vaults'"
+            )
+        del vaults[name]
+        _save(vaults)
     return {"name": name, "removed": True}
 
 

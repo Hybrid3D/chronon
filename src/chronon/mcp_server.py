@@ -7,11 +7,21 @@ from mcp.server.fastmcp import FastMCP
 
 from chronon.api.operations import ChrononRepository
 from chronon.api.operations import add_vault as _add_vault
+from chronon.api.operations import init_repository as _init_repository
 from chronon.api.operations import list_vaults as _list_vaults
 from chronon.api.operations import remove_vault as _remove_vault
 from chronon.core.errors import ChrononError
 
-mcp = FastMCP("chronon")
+mcp = FastMCP(
+    "chronon",
+    instructions=(
+        "Local, immutable per-file history. Use a vault name when the server's "
+        "working directory is outside the target repository. Before overwriting "
+        "scratch or foreign content, read it and pass its working_revision as "
+        "expected_revision. Tool errors are returned as structured objects with "
+        "an error field."
+    ),
+)
 
 
 def _safe(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -40,7 +50,27 @@ def remove_vault(name: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def add_resource(resource: str,
+def initialize_repository(
+    directory: str = ".",
+    register_vault: str | None = None,
+    create_agent_instructions: bool = False,
+    agent_instructions_filename: str = "CHRONON.md",
+) -> dict[str, Any]:
+    """Initialize a manual-mode repository and optionally register/write guidance."""
+    agents_md = agent_instructions_filename if create_agent_instructions else False
+    return _safe(
+        lambda: _init_repository(
+            directory,
+            "manual",
+            register_vault=register_vault,
+            agents_md=agents_md,
+        )
+    )
+
+
+@mcp.tool()
+def add_resource(
+    resource: str,
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Begin tracking an existing file in the current Chronon repository."""
@@ -54,9 +84,7 @@ def move_resource(
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Rename a tracked file, preserving its full history and its resource id."""
-    return _safe(
-        lambda: ChrononRepository(vault=vault).move(source, destination)
-    )
+    return _safe(lambda: ChrononRepository(vault=vault).move(source, destination))
 
 
 @mcp.tool()
@@ -70,14 +98,36 @@ def copy_resource(
     The copy gets a new id and a history starting at revision 0; its descriptor
     records the source id and the source revision the content came from.
     """
+    return _safe(lambda: ChrononRepository(vault=vault).copy(source, destination))
+
+
+@mcp.tool()
+def put_resource(
+    resource: str,
+    content: str,
+    message: str | None = None,
+    author: str | None = None,
+    expected_revision: str | None = None,
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """Create and track a new resource, or safely update an existing one.
+
+    A new path must not already exist. Before updating scratch content, call
+    ``read_resource`` and pass its ``working_revision`` as ``expected_revision``.
+    Supplying ``message`` creates an immutable commit in the same operation.
+    """
     return _safe(
-        lambda: ChrononRepository(vault=vault).copy(source, destination)
+        lambda: ChrononRepository(vault=vault).put(
+            resource, content, message, author, expected_revision
+        )
     )
 
 
 @mcp.tool()
 def read_resource(
-    resource: str, at: str = "working", format: str = "raw",
+    resource: str,
+    at: str = "working",
+    format: str = "raw",
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Read a working copy or a committed revision."""
@@ -93,7 +143,9 @@ def diff_resource(
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Compare two revisions; YAML and JSON use structural diff by default."""
-    return _safe(lambda: ChrononRepository(vault=vault).diff(resource, from_ref, to_ref, format))
+    return _safe(
+        lambda: ChrononRepository(vault=vault).diff(resource, from_ref, to_ref, format)
+    )
 
 
 @mcp.tool()
@@ -107,7 +159,9 @@ def history_resource(
 ) -> dict[str, Any]:
     """List immutable commits, newest first."""
     return _safe(
-        lambda: ChrononRepository(vault=vault).history(resource, limit, since, until, author)
+        lambda: ChrononRepository(vault=vault).history(
+            resource, limit, since, until, author
+        )
     )
 
 
@@ -121,7 +175,9 @@ def commit_resource(
 ) -> dict[str, Any]:
     """Commit the current working copy. A non-empty message is required."""
     return _safe(
-        lambda: ChrononRepository(vault=vault).commit(resource, message, author, expected_revision)
+        lambda: ChrononRepository(vault=vault).commit(
+            resource, message, author, expected_revision
+        )
     )
 
 
@@ -185,7 +241,8 @@ def unset_value(
 
 
 @mcp.tool()
-def status_resource(resource: str,
+def status_resource(
+    resource: str,
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Report untracked, clean, dirty, or foreign working-copy state."""
@@ -201,6 +258,18 @@ def list_resources(
 
 
 @mcp.tool()
+def list_directory(
+    directory: str = ".",
+    include_status: bool = False,
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """List immediate tracked children below one repository directory."""
+    return _safe(
+        lambda: ChrononRepository(vault=vault).list_directory(directory, include_status)
+    )
+
+
+@mcp.tool()
 def path_history(
     resource: str,
     path: str,
@@ -209,7 +278,11 @@ def path_history(
     vault: str | None = None,
 ) -> dict[str, Any]:
     """List commits that changed one structured value."""
-    return _safe(lambda: ChrononRepository(vault=vault).path_history(resource, path, since, until))
+    return _safe(
+        lambda: ChrononRepository(vault=vault).path_history(
+            resource, path, since, until
+        )
+    )
 
 
 @mcp.tool()
@@ -238,24 +311,54 @@ def discard_changes(
 ) -> dict[str, Any]:
     """Restore the latest committed content; foreign changes require force."""
     return _safe(
-        lambda: ChrononRepository(vault=vault).discard(resource, force, expected_revision)
+        lambda: ChrononRepository(vault=vault).discard(
+            resource, force, expected_revision
+        )
     )
 
 
 @mcp.tool()
-def accept_foreign(resource: str,
+def accept_foreign(
+    resource: str,
+    expected_revision: str | None = None,
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Accept externally edited content as the dirty working baseline."""
-    return _safe(lambda: ChrononRepository(vault=vault).accept_foreign(resource))
+    return _safe(
+        lambda: ChrononRepository(vault=vault).accept_foreign(
+            resource, expected_revision
+        )
+    )
 
 
 @mcp.tool()
-def validate_resource(resource: str,
+def validate_resource(
+    resource: str,
     vault: str | None = None,
 ) -> dict[str, Any]:
     """Validate the current working copy without changing it."""
     return _safe(lambda: ChrononRepository(vault=vault).validate(resource))
+
+
+@mcp.tool()
+def register_schema(
+    resource: str,
+    schema: dict[str, Any],
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """Register a valid JSON Schema after validating the current resource."""
+    return _safe(
+        lambda: ChrononRepository(vault=vault).register_schema(resource, schema)
+    )
+
+
+@mcp.tool()
+def write_agent_instructions(
+    filename: str = "CHRONON.md",
+    vault: str | None = None,
+) -> dict[str, Any]:
+    """Create or refresh the marked Chronon section in an agent guidance file."""
+    return _safe(lambda: ChrononRepository(vault=vault).write_agents_md(filename))
 
 
 def main() -> None:

@@ -9,12 +9,17 @@ def test_mcp_exposes_manual_versioning_tools() -> None:
     tools = asyncio.run(mcp.list_tools())
     names = {tool.name for tool in tools}
     assert {
+        "initialize_repository",
         "add_resource",
         "move_resource",
         "copy_resource",
+        "put_resource",
         "commit_resource",
         "diff_resource",
         "history_resource",
+        "list_directory",
+        "register_schema",
+        "write_agent_instructions",
     } <= names
     assert "lock_resource" not in names
 
@@ -48,3 +53,48 @@ def test_mcp_returns_structured_domain_errors(tmp_path: Path, monkeypatch) -> No
         mcp.call_tool("status_resource", {"resource": "missing.yml"})
     )
     assert result["error"] == "resource_not_tracked"
+
+
+def test_mcp_can_initialize_and_create_a_resource(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "vault"
+    monkeypatch.chdir(tmp_path)
+
+    _, initialized = asyncio.run(
+        mcp.call_tool(
+            "initialize_repository",
+            {
+                "directory": str(root),
+                "create_agent_instructions": True,
+            },
+        )
+    )
+    assert initialized["created"] is True
+    assert (root / "CHRONON.md").is_file()
+
+    monkeypatch.chdir(root)
+    _, created = asyncio.run(
+        mcp.call_tool(
+            "put_resource",
+            {
+                "resource": "notes.yml",
+                "content": "value: 1\n",
+                "message": "initial",
+            },
+        )
+    )
+    assert created["created"] is True
+    assert created["committed"] is True
+
+    _, listing = asyncio.run(mcp.call_tool("list_directory", {"include_status": True}))
+    assert listing["entries"][0]["state"] == "clean"
+
+
+def test_mcp_agent_instructions_error_is_structured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    init_repository(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _, result = asyncio.run(
+        mcp.call_tool("write_agent_instructions", {"filename": "nested/AGENTS.md"})
+    )
+    assert result["error"] == "invalid_argument"

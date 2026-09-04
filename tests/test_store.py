@@ -60,3 +60,16 @@ def test_add_nested_file_and_list(tmp_path: Path) -> None:
     assert (
         repository.list_resources()["resources"][0]["resource"] == "nested/config.yml"
     )
+
+
+def test_corrupt_descriptor_is_not_silently_hidden(tmp_path: Path) -> None:
+    init_repository(tmp_path)
+    (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+    repository = ChrononRepository(tmp_path)
+    repository.add("notes.txt")
+    repository.store.descriptor_path("notes.txt").write_text(
+        "not json\n", encoding="utf-8"
+    )
+
+    with pytest.raises(FileError, match="descriptor is corrupt"):
+        repository.list_resources()

@@ -140,6 +140,14 @@ class ChrononRepository:
             raise FileError(
                 "registered schema must be a JSON object", resource=resource
             )
+        try:
+            self._validate_schema_json(value)
+        except FileError as exc:
+            raise FileError(
+                "registered schema is invalid",
+                resource=resource,
+                **exc.details,
+            ) from exc
         return value
 
     def _working_content(self, resource: str) -> str:
@@ -213,6 +221,10 @@ class ChrononRepository:
     def status(self, resource: str | Path) -> dict[str, Any]:
         relative = self.store.require_tracked(resource)
         result = resource_state(self.store, relative)
+        if result["state"] == "missing":
+            result["diff"] = None
+            result["validation_issues"] = []
+            return result
         commits = read_index(self.store, relative)
         if commits and result["state"] != "clean":
             latest = read_snapshot(self.store, relative, commits[-1])
@@ -316,11 +328,7 @@ class ChrononRepository:
     @staticmethod
     def _prune_empty_parents(start: Path, stop: Path) -> None:
         current = start
-        while (
-            current != stop
-            and current.is_dir()
-            and not any(current.iterdir())
-        ):
+        while current != stop and current.is_dir() and not any(current.iterdir()):
             current.rmdir()
             current = current.parent
 
@@ -373,9 +381,7 @@ class ChrononRepository:
                 break
         return chosen
 
-    def move(
-        self, source: str | Path, destination: str | Path
-    ) -> dict[str, Any]:
+    def move(self, source: str | Path, destination: str | Path) -> dict[str, Any]:
         """Rename a tracked file, carrying its full history and id along.
 
         The path change is appended to the descriptor's ``path_log`` so
@@ -412,9 +418,7 @@ class ChrononRepository:
                 os.rename(target_meta, origin_meta)
                 if moved_schema:
                     self._move_schema(target, origin)
-                raise FileError(
-                    "cannot move working copy", resource=target
-                ) from exc
+                raise FileError("cannot move working copy", resource=target) from exc
 
             descriptor["id"] = resource_id
             descriptor["resource"] = target
@@ -440,9 +444,7 @@ class ChrononRepository:
                 "history_count": len(commits),
             }
 
-    def copy(
-        self, source: str | Path, destination: str | Path
-    ) -> dict[str, Any]:
+    def copy(self, source: str | Path, destination: str | Path) -> dict[str, Any]:
         """Copy a tracked file to a new path as an independent resource.
 
         The copy is a fresh resource: new id, history starting at revision 0
@@ -510,9 +512,7 @@ class ChrononRepository:
 
             if origin_descriptor.get("id") != source_id:
                 origin_descriptor["id"] = source_id
-                atomic_write_json(
-                    self.store.descriptor_path(origin), origin_descriptor
-                )
+                atomic_write_json(self.store.descriptor_path(origin), origin_descriptor)
             self.store.forget_id_cache(target)
 
             return {
@@ -575,7 +575,12 @@ class ChrononRepository:
         resolved = resolve_revision(ref, commits, resource)
         if resolved.kind == "working":
             return self._working_content(resource), None
-        assert resolved.commit is not None
+        if resolved.commit is None:  # defensive: resolve_revision owns this invariant
+            raise FileError(
+                "resolved revision is missing its commit",
+                resource=resource,
+                ref=str(ref),
+            )
         return read_snapshot(self.store, resource, resolved.commit), resolved.commit
 
     def read(
@@ -797,7 +802,7 @@ class ChrononRepository:
                     resource=relative,
                     hint="use --force only if the external change may be lost",
                 )
-            if status["state"] != "foreign":
+            if status["state"] != "foreign" or expected_revision is not None:
                 self._check_working_revision(relative, status, expected_revision)
             commits = read_index(self.store, relative)
             if not commits:
@@ -816,10 +821,16 @@ class ChrononRepository:
                 relative,
             )
 
-    def accept_foreign(self, resource: str | Path) -> dict[str, Any]:
+    def accept_foreign(
+        self,
+        resource: str | Path,
+        expected_revision: str | None = None,
+    ) -> dict[str, Any]:
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
+            if expected_revision is not None:
+                self._check_working_revision(relative, status, expected_revision)
             if status["state"] != "foreign":
                 return self._with_working_state(
                     {
@@ -845,13 +856,25 @@ class ChrononRepository:
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
         relative = self.store.require_tracked(resource)
+        if not message.strip():
+            raise InvalidArgument("commit message must not be empty", resource=relative)
         if str(at) == "working":
             raise InvalidRevspec("rollback target cannot be working", value="working")
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
+            if status["state"] == "foreign" and expected_revision is None:
+                raise ForeignChange(
+                    "refusing to overwrite a change made outside chronon",
+                    resource=relative,
+                    hint="read status and retry with --if-match, or commit/accept the external change",
+                )
             self._check_working_revision(relative, status, expected_revision)
             target, target_commit = self._content_at(relative, at)
-            current = self._working_content(relative)
+            current = (
+                None
+                if status["state"] == "missing"
+                else self._working_content(relative)
+            )
             commits = read_index(self.store, relative)
             if (
                 commits
@@ -887,7 +910,12 @@ class ChrononRepository:
     def _dump(self, value: Any, resource: str) -> str:
         suffix = Path(resource).suffix.lower()
         if suffix == ".json":
-            return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+            try:
+                return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+            except (TypeError, ValueError) as exc:
+                raise InvalidArgument(
+                    "value cannot be represented in JSON", resource=resource
+                ) from exc
         if suffix in {".yaml", ".yml"}:
             return yaml.safe_dump(value, allow_unicode=True, sort_keys=False)
         if isinstance(value, str):
@@ -1040,14 +1068,15 @@ class ChrononRepository:
             raise FileError("schema must be a JSON object", resource=relative)
         content = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
         self._validate_schema_json(schema)
-        issues = validate_content(self._working_content(relative), relative, schema)
-        if issues:
-            raise ValidationFailed(
-                "current resource does not satisfy the schema",
-                resource=relative,
-                issues=[issue.as_dict() for issue in issues],
-            )
-        atomic_write(self._schema_path(relative), content)
+        with resource_operation_lock(self.store, relative):
+            issues = validate_content(self._working_content(relative), relative, schema)
+            if issues:
+                raise ValidationFailed(
+                    "current resource does not satisfy the schema",
+                    resource=relative,
+                    issues=[issue.as_dict() for issue in issues],
+                )
+            atomic_write(self._schema_path(relative), content)
         return {
             "resource": relative,
             "registered": True,

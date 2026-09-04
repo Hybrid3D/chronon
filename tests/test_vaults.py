@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,17 @@ from chronon.core import vaults
 from chronon.core.errors import ChrononError, FileError, InvalidArgument
 
 runner = CliRunner()
+
+
+def _add_vault_worker(name: str, root: str, start, result) -> None:
+    """Process target kept importable for the Windows ``spawn`` start method."""
+    start.wait()
+    try:
+        vaults.add_vault(name, root)
+    except Exception as exc:  # pragma: no cover - asserted through the queue
+        result.put((False, repr(exc)))
+    else:
+        result.put((True, name))
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +71,21 @@ def test_invalid_vault_name_rejected(tmp_path: Path) -> None:
     init_repository(root)
     with pytest.raises(InvalidArgument):
         vaults.add_vault("has a space", root)
+    with pytest.raises(InvalidArgument):
+        vaults.add_vault("looks-valid\n", root)
+
+
+def test_config_home_uses_xdg_directory(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CHRONON_CONFIG_HOME")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert vaults.config_home() == tmp_path / "xdg" / "chronon"
+
+
+def test_config_home_uses_appdata_on_windows(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CHRONON_CONFIG_HOME")
+    monkeypatch.setattr(vaults.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    assert vaults.config_home() == tmp_path / "AppData" / "Roaming" / "chronon"
 
 
 def test_registry_survives_across_processes(tmp_path: Path) -> None:
@@ -70,6 +97,31 @@ def test_registry_survives_across_processes(tmp_path: Path) -> None:
     assert vaults.resolve_vault("mine") == root.resolve()
     # simulate a fresh process re-reading the registry from disk
     assert vaults.list_vaults()["mine"] == str(root.resolve())
+
+
+def test_concurrent_vault_additions_do_not_lose_entries(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    context = multiprocessing.get_context("spawn")
+    start = context.Event()
+    results = context.Queue()
+    workers = [
+        context.Process(
+            target=_add_vault_worker,
+            args=(f"vault-{index}", str(root), start, results),
+        )
+        for index in range(4)
+    ]
+    for worker in workers:
+        worker.start()
+    start.set()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+
+    outcomes = [results.get(timeout=2) for _ in workers]
+    assert all(success for success, _ in outcomes), outcomes
+    assert set(vaults.list_vaults()) == {f"vault-{index}" for index in range(4)}
 
 
 # ── ChrononRepository(vault=...) resolves without touching cwd ─────────────
@@ -114,9 +166,10 @@ def test_cli_add_list_remove_vault(tmp_path: Path) -> None:
 
     remove = runner.invoke(app, ["remove-vault", "mine", "--json"])
     assert remove.exit_code == 0, remove.output
-    assert runner.invoke(
-        app, ["list-vaults", "--json"]
-    ).output.strip() == json.dumps({"vaults": []}, ensure_ascii=False, indent=2).strip()
+    assert (
+        runner.invoke(app, ["list-vaults", "--json"]).output.strip()
+        == json.dumps({"vaults": []}, ensure_ascii=False, indent=2).strip()
+    )
 
 
 def test_cli_init_accepts_a_directory_matching_a_vault_name(
@@ -136,6 +189,8 @@ def test_cli_init_accepts_a_directory_matching_a_vault_name(
 
 def test_cli_init_register_registers_a_vault_in_one_step(tmp_path: Path) -> None:
     root = tmp_path / "proj"
+    human = runner.invoke(app, ["init", str(root), "--register", "mine"])
+    assert "Registered vault mine" in human.output
     result = runner.invoke(app, ["init", str(root), "--register", "mine", "--json"])
     assert result.exit_code == 0, result.output
     assert vaults.resolve_vault("mine") == root.resolve()
