@@ -22,22 +22,6 @@ from chronon.core.errors import ChrononError, InvalidArgument
 app = typer.Typer(
     no_args_is_help=True, help="Document-oriented local history indexed by time."
 )
-ls_app = typer.Typer(
-    add_completion=False,
-    help="List files managed by Chronon.",
-)
-cat_app = typer.Typer(
-    add_completion=False,
-    help="Read a file managed by Chronon.",
-)
-write_app = typer.Typer(
-    add_completion=False,
-    help="Create or update a file through Chronon.",
-)
-commit_app = typer.Typer(
-    add_completion=False,
-    help="Commit a Chronon scratch working copy.",
-)
 
 VAULT_HELP = (
     "Registered vault name (see 'chronon list-vaults'). Resolved from the "
@@ -473,16 +457,14 @@ def read_command(
 def _list_directory(
     directory: Path,
     long_output: bool,
-    vault: str | None,
     json_output: bool,
 ) -> None:
-    def action() -> dict[str, Any]:
-        if vault:
-            return ChrononRepository(vault=vault).list_directory(directory, long_output)
-        target = directory.resolve()
-        return ChrononRepository(target).list_directory(target, long_output)
-
-    _run(action, json_output)
+    _run(
+        lambda: ChrononRepository(vault=_active_vault()).list_directory(
+            directory, long_output
+        ),
+        json_output,
+    )
 
 
 LONG_OUTPUT_OPTION = typer.Option(
@@ -496,17 +478,6 @@ LONG_OUTPUT_OPTION = typer.Option(
 )
 
 
-@ls_app.command()
-def chronon_ls(
-    directory: Path = typer.Argument(Path("."), help="Directory to list."),
-    long_output: bool = LONG_OUTPUT_OPTION,
-    vault: str | None = VAULT_OPTION,
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """List immediate entries that contain Chronon-managed files."""
-    _list_directory(directory, long_output, vault, json_output)
-
-
 @app.command("ls")
 def ls_command(
     directory: Path = typer.Argument(Path("."), help="Directory to list."),
@@ -514,78 +485,7 @@ def ls_command(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """List immediate entries that contain Chronon-managed files."""
-    _list_directory(directory, long_output, _active_vault(), json_output)
-
-
-@cat_app.command()
-def chronon_cat(
-    resource: Path = typer.Argument(..., help="Managed file to read."),
-    at: str = typer.Option("working", "--at", help="Revision to read."),
-    vault: str | None = VAULT_OPTION,
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Write a managed file revision to standard output."""
-
-    def action() -> Any:
-        target = resource if vault else resource.resolve()
-        result = ChrononRepository(None if vault else target, vault=vault).read(
-            target, at, "raw"
-        )
-        return result if json_output else result["content"]
-
-    _run(action, json_output)
-
-
-@write_app.command()
-def chronon_write(
-    resource: Path = typer.Argument(..., help="Managed file to create or update."),
-    content: str | None = typer.Option(None, "--content", help="Literal content."),
-    stdin: bool = typer.Option(False, "--stdin", help="Read content from stdin."),
-    scratch: bool = typer.Option(
-        False, "--scratch", help="Save without creating a commit."
-    ),
-    message: str | None = typer.Option(None, "--message", "-m"),
-    author: str | None = typer.Option(None, "--author"),
-    expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Create or update a tracked UTF-8 text file."""
-
-    def action() -> dict[str, Any]:
-        sources = int(content is not None) + int(stdin)
-        if sources != 1:
-            raise InvalidArgument("choose exactly one of --content or --stdin")
-        modes = int(scratch) + int(message is not None)
-        if modes != 1:
-            raise InvalidArgument("choose exactly one of --scratch or --message")
-        target = resource if vault else resource.resolve()
-        value = sys.stdin.read() if stdin else content or ""
-        return ChrononRepository(None if vault else target, vault=vault).put(
-            target, value, message, author, expected_revision
-        )
-
-    _run(action, json_output)
-
-
-@commit_app.command()
-def chronon_commit(
-    resource: Path = typer.Argument(..., help="Managed scratch file to commit."),
-    message: str = typer.Option(..., "--message", "-m"),
-    expected_revision: str = typer.Option(..., "--if-match"),
-    author: str | None = typer.Option(None, "--author"),
-    vault: str | None = VAULT_OPTION,
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """Commit exactly the scratch revision that was previously read."""
-
-    def action() -> dict[str, Any]:
-        target = resource if vault else resource.resolve()
-        return ChrononRepository(None if vault else target, vault=vault).commit(
-            target, message, author, expected_revision
-        )
-
-    _run(action, json_output)
+    _list_directory(directory, long_output, json_output)
 
 
 @app.command("show")
@@ -612,6 +512,9 @@ def write(
     content: str | None = typer.Option(None, "--content"),
     file: Path | None = typer.Option(None, "--file"),
     stdin: bool = typer.Option(False, "--stdin"),
+    scratch: bool = typer.Option(
+        False, "--scratch", help="Save without creating a commit."
+    ),
     message: str | None = typer.Option(None, "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
@@ -623,13 +526,16 @@ def write(
         )
         if sources != 1:
             raise InvalidArgument("choose exactly one of --content, --file, or --stdin")
+        modes = int(scratch) + int(message is not None)
+        if modes != 1:
+            raise InvalidArgument("choose exactly one of --scratch or --message")
         if file is not None:
             value = file.read_text(encoding="utf-8")
         elif stdin:
             value = sys.stdin.read()
         else:
             value = content or ""
-        return ChrononRepository(vault=_active_vault()).write(
+        return ChrononRepository(vault=_active_vault()).put(
             resource, value, message, author, expected_revision
         )
 
@@ -791,22 +697,6 @@ def version() -> None:
 
 def main() -> None:
     app(prog_name="chronon")
-
-
-def ls_main() -> None:
-    ls_app(prog_name="chronon-ls")
-
-
-def cat_main() -> None:
-    cat_app(prog_name="chronon-cat")
-
-
-def write_main() -> None:
-    write_app(prog_name="chronon-write")
-
-
-def commit_main() -> None:
-    commit_app(prog_name="chronon-commit")
 
 
 if __name__ == "__main__":

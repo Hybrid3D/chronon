@@ -44,10 +44,6 @@ dev = [
 
 [project.scripts]
 chronon = "chronon.cli:main"
-chronon-ls = "chronon.cli:ls_main"
-chronon-cat = "chronon.cli:cat_main"
-chronon-write = "chronon.cli:write_main"
-chronon-commit = "chronon.cli:commit_main"
 chronon-mcp = "chronon.mcp_server:main"
 
 [tool.setuptools.packages.find]

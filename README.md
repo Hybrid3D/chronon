@@ -31,12 +31,11 @@ The package name is `chronon-vcs`; the installed commands are:
 
 ```text
 chronon
-chronon-ls
-chronon-cat
-chronon-write
-chronon-commit
 chronon-mcp
 ```
+
+`chronon` is the single human/CLI-agent entry point. `chronon-mcp` is optional
+and is only needed by clients that integrate through MCP instead of a shell.
 
 ### macOS
 
@@ -202,13 +201,6 @@ chronon --vault knowledge diff architecture.yml
 chronon -v knowledge log architecture.yml
 ```
 
-The standalone shell-style commands accept `--vault` directly:
-
-```bash
-chronon-ls --vault knowledge .
-chronon-cat --vault knowledge architecture.yml
-```
-
 Without a vault option, Chronon searches upward from the current directory for
 the nearest `.chronon/config.toml`, similar to Git repository discovery.
 
@@ -283,16 +275,16 @@ printf '# Final text\n' | chronon write note.md --stdin -m "finish note" \
   --if-match "$revision"
 ```
 
-To create a missing path and track it in one operation, use the agent-friendly
-standalone command:
+`chronon write` also creates a missing path and starts tracking it in one
+operation:
 
 ```bash
-printf 'first line\n' | chronon-write notes/new.txt --stdin --scratch
-chronon-cat notes/new.txt --json
-chronon-commit notes/new.txt -m "add note" --if-match '<working_revision>'
+printf 'first line\n' | chronon write notes/new.txt --stdin --scratch
+chronon read notes/new.txt --json
+chronon commit notes/new.txt -m "add note" --if-match '<working_revision>'
 ```
 
-`chronon-write` refuses to overwrite an existing untracked path.
+`chronon write` refuses to overwrite an existing untracked path.
 
 ### Normal editor and external changes
 

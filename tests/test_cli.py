@@ -4,13 +4,13 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from chronon.cli import app, cat_app, commit_app, ls_app, write_app
+from chronon.cli import app
 
 runner = CliRunner()
 
 
 def _working_revision(resource: str) -> str:
-    result = runner.invoke(cat_app, [resource, "--json"])
+    result = runner.invoke(app, ["read", resource, "--json"])
     assert result.exit_code == 0, result.output
     return json.loads(result.output)["working_revision"]
 
@@ -84,7 +84,7 @@ def test_clean_text_diff_says_no_changes(tmp_path: Path, monkeypatch) -> None:
     assert "last=" in status.output
 
 
-def test_shell_style_ls_and_cat_commands(tmp_path: Path, monkeypatch) -> None:
+def test_main_ls_and_read_commands(tmp_path: Path, monkeypatch) -> None:
     assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
     (tmp_path / "empty.txt").write_text("", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("first\nsecond\n", encoding="utf-8")
@@ -99,20 +99,20 @@ def test_shell_style_ls_and_cat_commands(tmp_path: Path, monkeypatch) -> None:
         == 0
     )
 
-    listed = runner.invoke(ls_app, ["."])
+    listed = runner.invoke(app, ["ls", "."])
     assert listed.exit_code == 0, listed.output
     assert listed.output == "empty.txt\nnested/\nnotes.txt\n"
 
-    nested = runner.invoke(ls_app, ["nested", "--json"])
+    nested = runner.invoke(app, ["ls", "nested", "--json"])
     assert nested.exit_code == 0, nested.output
     assert json.loads(nested.output)["entries"] == [
         {"name": "tracked.txt", "path": "nested/tracked.txt", "type": "file"}
     ]
 
-    content = runner.invoke(cat_app, ["notes.txt"])
+    content = runner.invoke(app, ["read", "notes.txt"])
     assert content.exit_code == 0, content.output
     assert content.output == "first\nsecond\n"
-    assert runner.invoke(cat_app, ["empty.txt"]).output == ""
+    assert runner.invoke(app, ["read", "empty.txt"]).output == ""
 
     assert (
         runner.invoke(
@@ -129,15 +129,17 @@ def test_shell_style_ls_and_cat_commands(tmp_path: Path, monkeypatch) -> None:
         == 0
     )
     assert (
-        runner.invoke(app, ["write", "notes.txt", "--content", "changed\n"]).exit_code
+        runner.invoke(
+            app, ["write", "notes.txt", "--content", "changed\n", "--scratch"]
+        ).exit_code
         == 0
     )
-    historical = runner.invoke(cat_app, ["notes.txt", "--at", "latest"])
+    historical = runner.invoke(app, ["read", "notes.txt", "--at", "latest"])
     assert historical.exit_code == 0, historical.output
     assert historical.output == "first\nsecond\n"
 
 
-def test_shell_style_commands_resolve_paths_from_nested_cwd(
+def test_main_commands_use_vault_relative_paths_from_nested_cwd(
     tmp_path: Path, monkeypatch
 ) -> None:
     assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
@@ -148,59 +150,73 @@ def test_shell_style_commands_resolve_paths_from_nested_cwd(
     assert runner.invoke(app, ["add", "nested/notes.txt"]).exit_code == 0
 
     monkeypatch.chdir(nested)
-    assert runner.invoke(ls_app, ["."]).output == "notes.txt\n"
-    assert runner.invoke(cat_app, ["notes.txt"]).output == "nested content\n"
+    assert runner.invoke(app, ["ls", "nested"]).output == "notes.txt\n"
+    assert runner.invoke(app, ["read", "nested/notes.txt"]).output == "nested content\n"
 
 
-def test_shell_style_commands_use_explicit_vault_outside_cwd(
+def test_main_commands_use_registered_vault_outside_cwd(
     tmp_path: Path, monkeypatch
 ) -> None:
     vault = tmp_path / "vault"
     outside = tmp_path / "outside"
     outside.mkdir()
-    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    assert (
+        runner.invoke(app, ["init", str(vault), "--register", "knowledge"]).exit_code
+        == 0
+    )
     (vault / "notes.txt").write_text("vault content\n", encoding="utf-8")
     monkeypatch.chdir(vault)
     assert runner.invoke(app, ["add", "notes.txt"]).exit_code == 0
 
     monkeypatch.chdir(outside)
-    listed = runner.invoke(ls_app, [str(vault)])
+    listed = runner.invoke(app, ["--vault", "knowledge", "ls", "."])
     assert listed.exit_code == 0, listed.output
     assert listed.output == "notes.txt\n"
-    content = runner.invoke(cat_app, [str(vault / "notes.txt")])
+    content = runner.invoke(app, ["--vault", "knowledge", "read", "notes.txt"])
     assert content.exit_code == 0, content.output
     assert content.output == "vault content\n"
 
 
-def test_chronon_write_creates_and_updates_from_outside_vault(
+def test_main_write_creates_and_updates_in_registered_vault(
     tmp_path: Path, monkeypatch
 ) -> None:
     vault = tmp_path / "vault"
     outside = tmp_path / "outside"
     outside.mkdir()
-    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    assert (
+        runner.invoke(app, ["init", str(vault), "--register", "knowledge"]).exit_code
+        == 0
+    )
     monkeypatch.chdir(outside)
-    resource = vault / "nested" / "notes.txt"
+    resource = "nested/notes.txt"
+    vault_args = ["--vault", "knowledge"]
 
     created = runner.invoke(
-        write_app,
-        [str(resource), "--stdin", "--scratch", "--json"],
+        app,
+        [*vault_args, "write", resource, "--stdin", "--scratch", "--json"],
         input="created through chronon\n",
     )
     assert created.exit_code == 0, created.output
     created_result = json.loads(created.output)
     assert created_result["created"] is True
-    assert runner.invoke(cat_app, [str(resource)]).output == "created through chronon\n"
-    assert runner.invoke(ls_app, [str(vault / "nested")]).output == "notes.txt\n"
     assert (
-        runner.invoke(ls_app, [str(vault / "nested"), "-l"]).output
+        runner.invoke(app, [*vault_args, "read", resource]).output
+        == "created through chronon\n"
+    )
+    assert runner.invoke(app, [*vault_args, "ls", "nested"]).output == "notes.txt\n"
+    assert (
+        runner.invoke(app, [*vault_args, "ls", "nested", "-l"]).output
         == "scratch     0  -                 notes.txt\n"
     )
 
     updated = runner.invoke(
-        write_app,
+        app,
         [
-            str(resource),
+            *vault_args,
+            "write",
+            resource,
             "--content",
             "updated\n",
             "-m",
@@ -214,17 +230,19 @@ def test_chronon_write_creates_and_updates_from_outside_vault(
     result = json.loads(updated.output)
     assert result["created"] is False
     assert result["committed"] is True
-    assert runner.invoke(cat_app, [str(resource)]).output == "updated\n"
+    assert runner.invoke(app, [*vault_args, "read", resource]).output == "updated\n"
     # timestamp is wall-clock at commit time, so match its shape, not its value
     assert re.fullmatch(
         r"clean       1  \d{4}-\d{2}-\d{2} \d{2}:\d{2}  notes\.txt\n",
-        runner.invoke(ls_app, [str(vault / "nested"), "-l"]).output,
+        runner.invoke(app, [*vault_args, "ls", "nested", "-l"]).output,
     )
 
     stale = runner.invoke(
-        write_app,
+        app,
         [
-            str(resource),
+            *vault_args,
+            "write",
+            resource,
             "--content",
             "stale overwrite\n",
             "--scratch",
@@ -235,10 +253,10 @@ def test_chronon_write_creates_and_updates_from_outside_vault(
     )
     assert stale.exit_code == 7
     assert json.loads(stale.output)["error"] == "revision_conflict"
-    assert runner.invoke(cat_app, [str(resource)]).output == "updated\n"
+    assert runner.invoke(app, [*vault_args, "read", resource]).output == "updated\n"
 
 
-def test_chronon_write_refuses_ambiguous_or_untracked_existing_input(
+def test_main_write_refuses_ambiguous_or_untracked_existing_input(
     tmp_path: Path, monkeypatch
 ) -> None:
     vault = tmp_path / "vault"
@@ -248,22 +266,21 @@ def test_chronon_write_refuses_ambiguous_or_untracked_existing_input(
     monkeypatch.chdir(vault)
 
     ambiguous = runner.invoke(
-        write_app,
-        [str(vault / "new.txt"), "--content", "value", "--stdin"],
+        app,
+        ["write", "new.txt", "--content", "value", "--stdin"],
         input="other",
     )
     assert ambiguous.exit_code == 4
 
-    missing_mode = runner.invoke(
-        write_app, [str(vault / "new.txt"), "--content", "value"]
-    )
+    missing_mode = runner.invoke(app, ["write", "new.txt", "--content", "value"])
     assert missing_mode.exit_code == 4
     assert "choose exactly one of --scratch or --message" in missing_mode.output
 
     ambiguous_mode = runner.invoke(
-        write_app,
+        app,
         [
-            str(vault / "new.txt"),
+            "write",
+            "new.txt",
             "--content",
             "value",
             "--scratch",
@@ -274,32 +291,39 @@ def test_chronon_write_refuses_ambiguous_or_untracked_existing_input(
     assert ambiguous_mode.exit_code == 4
 
     overwrite = runner.invoke(
-        write_app, [str(existing), "--content", "replacement\n", "--scratch"]
+        app, ["write", "existing.txt", "--content", "replacement\n", "--scratch"]
     )
     assert overwrite.exit_code == 3
     assert "refusing to overwrite an untracked path" in overwrite.output
     assert existing.read_text(encoding="utf-8") == "original\n"
 
 
-def test_chronon_commit_commits_exact_scratch_from_outside_vault(
+def test_main_commit_commits_exact_scratch_in_registered_vault(
     tmp_path: Path, monkeypatch
 ) -> None:
     vault = tmp_path / "vault"
     outside = tmp_path / "outside"
     outside.mkdir()
-    assert runner.invoke(app, ["init", str(vault)]).exit_code == 0
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    assert (
+        runner.invoke(app, ["init", str(vault), "--register", "knowledge"]).exit_code
+        == 0
+    )
     monkeypatch.chdir(outside)
-    resource = vault / "draft.txt"
+    vault_args = ["--vault", "knowledge"]
+    resource = "draft.txt"
 
     scratch = runner.invoke(
-        write_app,
-        [str(resource), "--content", "draft\n", "--scratch", "--json"],
+        app,
+        [*vault_args, "write", resource, "--content", "draft\n", "--scratch", "--json"],
     )
     scratch_revision = json.loads(scratch.output)["working_revision"]
     committed = runner.invoke(
-        commit_app,
+        app,
         [
-            str(resource),
+            *vault_args,
+            "commit",
+            resource,
             "-m",
             "finish draft",
             "--if-match",
@@ -312,16 +336,27 @@ def test_chronon_commit_commits_exact_scratch_from_outside_vault(
     result = json.loads(committed.output)
     assert result["committed"] is True
     assert result["state"] == "clean"
-    assert runner.invoke(cat_app, [str(resource), "--at", "latest"]).output == "draft\n"
+    assert (
+        runner.invoke(app, [*vault_args, "read", resource, "--at", "latest"]).output
+        == "draft\n"
+    )
 
 
-def test_chronon_write_validation_errors_are_json_when_requested(
+def test_main_write_validation_errors_are_json_when_requested(
     tmp_path: Path,
 ) -> None:
     resource = tmp_path / "new.txt"
     result = runner.invoke(
-        write_app,
-        [str(resource), "--content", "value", "--stdin", "--scratch", "--json"],
+        app,
+        [
+            "write",
+            str(resource),
+            "--content",
+            "value",
+            "--stdin",
+            "--scratch",
+            "--json",
+        ],
         input="other",
     )
 
