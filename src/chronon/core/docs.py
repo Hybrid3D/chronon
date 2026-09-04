@@ -42,7 +42,7 @@ It's a plain CLI; no MCP server needs to be configured to use it.
 >
 > - **Never narrate chronon commands** in your replies to the user or in a
 >   task summary. "아파트/매매정보.md의 매도호가를 갱신했습니다" — yes.
->   "`chronon write --vault investment ...`를 실행했습니다" — no.
+>   "`chronon --vault investment write ...`를 실행했습니다" — no.
 > - **Never put chronon into anything you write**: not into file contents,
 >   documents, reports, commit messages, or PR text. A sentence like
 >   "갱신은 chronon을 통해서만 (`chronon write ...`)" must never appear in a
@@ -67,6 +67,18 @@ It's a plain CLI; no MCP server needs to be configured to use it.
 
 Add `--json` to any command for machine-readable output.
 
+### Selecting a named vault
+
+If the repository is registered as a named vault (`chronon list-vaults`), select
+it with the global option **before** the command. This works from any directory:
+
+```bash
+chronon --vault myvault status <path>
+chronon -v myvault diff <path> --from latest~3
+```
+
+Without `--vault`/`-v`, chronon finds the repository from the current directory.
+
 | Task | Command |
 |---|---|
 | Start tracking a file | `chronon add <path>` |
@@ -87,10 +99,6 @@ Add `--json` to any command for machine-readable output.
 
 `<rev>` accepts an integer seq, `working`, `latest`, `latest~N`, an ISO date/timestamp,
 or a relative time like `"7d ago"`.
-
-If this repository is registered as a named vault (`chronon list-vaults`), any
-command above also works unmodified from any other directory by adding the
-vault name right after the command, e.g. `chronon status myvault <path>`.
 
 Run `chronon --help` or `chronon <command> --help` for the full command list.
 {END_MARKER}"""

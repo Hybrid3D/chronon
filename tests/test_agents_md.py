@@ -25,6 +25,8 @@ def test_ensure_agents_md_creates_file(tmp_path: Path) -> None:
     assert "chronon add <path>" in content
     assert "chronon is plumbing" in content.lower()
     assert "never narrate chronon commands" in content.lower()
+    assert "chronon --vault myvault status <path>" in content
+    assert "chronon -v myvault diff <path>" in content
 
 
 def test_ensure_agents_md_custom_filename(tmp_path: Path) -> None:
@@ -159,7 +161,7 @@ def test_cli_agents_md_works_via_vault_from_unrelated_cwd(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    result = runner.invoke(app, ["agents-md", "--vault", "mine"])
+    result = runner.invoke(app, ["--vault", "mine", "agents-md"])
     assert result.exit_code == 0, result.output
     assert (root / "CHRONON.md").is_file()
 
@@ -173,6 +175,6 @@ def test_cli_agents_md_custom_filename_via_vault(tmp_path: Path, monkeypatch) ->
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    result = runner.invoke(app, ["agents-md", "AGENTS.md", "--vault", "mine"])
+    result = runner.invoke(app, ["--vault", "mine", "agents-md", "AGENTS.md"])
     assert result.exit_code == 0, result.output
     assert (root / "AGENTS.md").is_file()

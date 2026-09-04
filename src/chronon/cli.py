@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -38,66 +39,30 @@ commit_app = typer.Typer(
     help="Commit a Chronon scratch working copy.",
 )
 
+VAULT_HELP = (
+    "Registered vault name (see 'chronon list-vaults'). Resolved from the "
+    "global per-user registry instead of the current directory."
+)
+
 VAULT_OPTION = typer.Option(
     None,
     "--vault",
-    help=(
-        "Registered vault name (see 'chronon list-vaults'). Resolved from the "
-        "global per-user registry, not the current directory. Omit to use the "
-        "current directory instead, as before."
-    ),
+    "-v",
+    help=VAULT_HELP,
+)
+_ACTIVE_VAULT: ContextVar[str | None] = ContextVar(
+    "chronon_active_vault", default=None
 )
 
 
-def _known_vault_names() -> set[str]:
-    try:
-        return {entry["name"] for entry in list_vaults()["vaults"]}
-    except ChrononError:
-        return set()
+@app.callback()
+def configure_cli(vault: str | None = VAULT_OPTION) -> None:
+    """Select a registered vault for the command being run."""
+    _ACTIVE_VAULT.set(vault)
 
 
-def _command_accepts_vault(command_name: str) -> bool:
-    """True if the given top-level subcommand declares --vault (VAULT_OPTION).
-
-    Not every command does — `init`, `add-vault`, `list-vaults`, `remove-vault`
-    manage repositories/registry entries themselves rather than operating
-    inside one, so they must never have their own positional arguments
-    mistaken for the `[vault]` shorthand. Checking Click's parsed params
-    directly (instead of hand-maintaining a name denylist) means a command
-    that doesn't take --vault can never be spliced into, by construction.
-    """
-    from typer.main import get_command
-
-    group = get_command(app)
-    command = group.commands.get(command_name)  # type: ignore[attr-defined]
-    if command is None:
-        return False
-    return any(param.name == "vault" for param in command.params)
-
-
-def _splice_positional_vault(argv: list[str], slot: int) -> list[str]:
-    """Let a bare registered vault name sit positionally at `slot`, e.g.
-
-        chronon diff myvault docs.yml --from ...   # command, then vault, then path
-        chronon-ls myvault sub/dir                  # no command: vault comes first
-
-    Click cannot leave an optional positional argument unfilled when a later
-    required one follows, so this rewrites the token into `--vault <name>`
-    before Click ever parses argv. Every command that accepts a vault already
-    declares --vault (VAULT_OPTION), so this is purely a convenience for the
-    common case; typing `--vault myvault` explicitly always works too, in any
-    position. Callers are expected to have already excluded commands that
-    don't take --vault (see `_command_accepts_vault`).
-    """
-    if len(argv) <= slot:
-        return argv
-    candidate = argv[slot]
-    if candidate.startswith("-"):
-        return argv
-    if candidate not in _known_vault_names():
-        return argv
-    rest = argv[:slot] + argv[slot + 1 :]
-    return [*rest, "--vault", candidate]
+def _active_vault() -> str | None:
+    return _ACTIVE_VAULT.get()
 
 
 def _echo_agents_md_result(value: dict[str, Any]) -> None:
@@ -319,13 +284,13 @@ def remove_vault_command(
 @app.command()
 def add(
     resources: list[Path] = typer.Argument(..., help="Files to begin tracking."),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
         lambda: {
             "resources": [
-                ChrononRepository(vault=vault).add(resource) for resource in resources
+                ChrononRepository(vault=_active_vault()).add(resource)
+                for resource in resources
             ]
         },
         json_output,
@@ -338,11 +303,10 @@ def commit(
     message: str = typer.Option(..., "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).commit(
+        lambda: ChrononRepository(vault=_active_vault()).commit(
             resource, message, author, expected_revision
         ),
         json_output,
@@ -353,12 +317,11 @@ def commit(
 def move_command(
     source: Path,
     destination: Path,
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Rename a tracked file, keeping its full history and id."""
     _run(
-        lambda: ChrononRepository(vault=vault).move(source, destination),
+        lambda: ChrononRepository(vault=_active_vault()).move(source, destination),
         json_output,
     )
 
@@ -370,7 +333,6 @@ app.command("move", hidden=True)(move_command)
 def copy_command(
     source: Path,
     destination: Path,
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Copy a tracked file to a new path as a fresh resource.
@@ -379,7 +341,7 @@ def copy_command(
     records the source id and the source revision it was copied from.
     """
     _run(
-        lambda: ChrononRepository(vault=vault).copy(source, destination),
+        lambda: ChrononRepository(vault=_active_vault()).copy(source, destination),
         json_output,
     )
 
@@ -393,11 +355,12 @@ def diff_command(
     from_ref: str = typer.Option("latest", "--from"),
     to_ref: str = typer.Option("working", "--to"),
     format: str = typer.Option("auto", "--format"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).diff(resource, from_ref, to_ref, format),
+        lambda: ChrononRepository(vault=_active_vault()).diff(
+            resource, from_ref, to_ref, format
+        ),
         json_output,
     )
 
@@ -426,10 +389,9 @@ def log_command(
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
     author: str | None = typer.Option(None, "--author"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _history(resource, limit, since, until, author, vault, json_output)
+    _history(resource, limit, since, until, author, _active_vault(), json_output)
 
 
 @app.command("history", hidden=True)
@@ -439,23 +401,21 @@ def history_command(
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
     author: str | None = typer.Option(None, "--author"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _history(resource, limit, since, until, author, vault, json_output)
+    _history(resource, limit, since, until, author, _active_vault(), json_output)
 
 
 @app.command()
 def status(
     resource: Path | None = typer.Argument(None),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
         lambda: (
-            ChrononRepository(vault=vault).status(resource)
+            ChrononRepository(vault=_active_vault()).status(resource)
             if resource
-            else ChrononRepository(vault=vault).list_resources()
+            else ChrononRepository(vault=_active_vault()).list_resources()
         ),
         json_output,
     )
@@ -463,9 +423,11 @@ def status(
 
 @app.command("list")
 def list_command(
-    vault: str | None = VAULT_OPTION, json_output: bool = typer.Option(False, "--json")
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _run(lambda: ChrononRepository(vault=vault).list_resources(), json_output)
+    _run(
+        lambda: ChrononRepository(vault=_active_vault()).list_resources(), json_output
+    )
 
 
 @app.command("read")
@@ -473,11 +435,10 @@ def read_command(
     resource: Path,
     at: str = typer.Option("working", "--at"),
     parsed: bool = typer.Option(False, "--parsed"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     def action() -> Any:
-        result = ChrononRepository(vault=vault).read(
+        result = ChrononRepository(vault=_active_vault()).read(
             resource, at, "parsed" if parsed else "raw"
         )
         if not parsed and not json_output:
@@ -487,23 +448,12 @@ def read_command(
     _run(action, json_output)
 
 
-@ls_app.command()
-def chronon_ls(
-    directory: Path = typer.Argument(Path("."), help="Directory to list."),
-    long_output: bool = typer.Option(
-        False,
-        "--long",
-        "-l",
-        help=(
-            "Add columns: state, revision count, last commit time, name "
-            "(like `ls -l`'s mode/nlink/mtime, but self-describing here in --help)."
-        ),
-    ),
-    vault: str | None = VAULT_OPTION,
-    json_output: bool = typer.Option(False, "--json"),
+def _list_directory(
+    directory: Path,
+    long_output: bool,
+    vault: str | None,
+    json_output: bool,
 ) -> None:
-    """List immediate entries that contain Chronon-managed files."""
-
     def action() -> dict[str, Any]:
         if vault:
             return ChrononRepository(vault=vault).list_directory(
@@ -515,11 +465,36 @@ def chronon_ls(
     _run(action, json_output)
 
 
-# `chronon-ls`(별도 바이너리)와 별개로 `chronon ls`(서브커맨드)로도 쓸 수 있게 메인 app에도 등록한다.
-# `app.add_typer(ls_app, name="ls")`는 안 된다 — ls_app이 단일 명령이라도 마운트되면 Typer가
-# 함수 이름(chronon_ls → "chronon-ls")을 그대로 하위 커맨드 이름으로 남겨 `chronon ls chronon-ls`가
-# 돼버린다. 같은 함수를 메인 app에 "ls" 라는 이름으로 직접 한 번 더 등록해야 `chronon ls`가 된다.
-app.command("ls")(chronon_ls)
+LONG_OUTPUT_OPTION = typer.Option(
+    False,
+    "--long",
+    "-l",
+    help=(
+        "Add columns: state, revision count, last commit time, name "
+        "(like `ls -l`'s mode/nlink/mtime, but self-describing here in --help)."
+    ),
+)
+
+
+@ls_app.command()
+def chronon_ls(
+    directory: Path = typer.Argument(Path("."), help="Directory to list."),
+    long_output: bool = LONG_OUTPUT_OPTION,
+    vault: str | None = VAULT_OPTION,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """List immediate entries that contain Chronon-managed files."""
+    _list_directory(directory, long_output, vault, json_output)
+
+
+@app.command("ls")
+def ls_command(
+    directory: Path = typer.Argument(Path("."), help="Directory to list."),
+    long_output: bool = LONG_OUTPUT_OPTION,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """List immediate entries that contain Chronon-managed files."""
+    _list_directory(directory, long_output, _active_vault(), json_output)
 
 
 @cat_app.command()
@@ -600,11 +575,10 @@ def show_command(
     resource: Path,
     revision: str,
     parsed: bool = typer.Option(False, "--parsed"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     def action() -> Any:
-        result = ChrononRepository(vault=vault).read(
+        result = ChrononRepository(vault=_active_vault()).read(
             resource, revision, "parsed" if parsed else "raw"
         )
         if not parsed and not json_output:
@@ -623,7 +597,6 @@ def write(
     message: str | None = typer.Option(None, "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     sources = sum(
@@ -642,7 +615,7 @@ def write(
             value = sys.stdin.read()
         else:
             value = content or ""
-        return ChrononRepository(vault=vault).write(
+        return ChrononRepository(vault=_active_vault()).write(
             resource, value, message, author, expected_revision
         )
 
@@ -658,11 +631,10 @@ def set_command(
     message: str | None = typer.Option(None, "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).set_value(
+        lambda: ChrononRepository(vault=_active_vault()).set_value(
             resource, path, value, type_name, message, author, expected_revision
         ),
         json_output,
@@ -676,11 +648,10 @@ def unset_command(
     message: str | None = typer.Option(None, "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).unset_value(
+        lambda: ChrononRepository(vault=_active_vault()).unset_value(
             resource, path, message, author, expected_revision
         ),
         json_output,
@@ -693,11 +664,10 @@ def path_history_command(
     path: str,
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).path_history(
+        lambda: ChrononRepository(vault=_active_vault()).path_history(
             resource, path, since, until
         ),
         json_output,
@@ -711,11 +681,10 @@ def rollback(
     message: str = typer.Option(..., "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).rollback(
+        lambda: ChrononRepository(vault=_active_vault()).rollback(
             resource, revision, message, author, expected_revision
         ),
         json_output,
@@ -727,11 +696,10 @@ def discard(
     resource: Path,
     force: bool = typer.Option(False, "--force"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).discard(
+        lambda: ChrononRepository(vault=_active_vault()).discard(
             resource, force, expected_revision
         ),
         json_output,
@@ -741,30 +709,33 @@ def discard(
 @app.command("accept")
 def accept_command(
     resource: Path,
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _run(lambda: ChrononRepository(vault=vault).accept_foreign(resource), json_output)
+    _run(
+        lambda: ChrononRepository(vault=_active_vault()).accept_foreign(resource),
+        json_output,
+    )
 
 
 @app.command()
 def validate(
     resource: Path,
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    _run(lambda: ChrononRepository(vault=vault).validate(resource), json_output)
+    _run(
+        lambda: ChrononRepository(vault=_active_vault()).validate(resource),
+        json_output,
+    )
 
 
 @app.command("schema-register")
 def schema_register(
     resource: Path,
     file: Path = typer.Option(..., "--file"),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
-        lambda: ChrononRepository(vault=vault).register_schema(
+        lambda: ChrononRepository(vault=_active_vault()).register_schema(
             resource, json.loads(file.read_text(encoding="utf-8"))
         ),
         json_output,
@@ -777,7 +748,6 @@ def agents_md_command(
         "CHRONON.md",
         help="Doc file to write at the repo root (e.g. AGENTS.md, CLAUDE.md).",
     ),
-    vault: str | None = VAULT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Write or refresh this repository's agents doc with chronon usage.
@@ -792,7 +762,7 @@ def agents_md_command(
     another tool wrote into the file is left alone.
     """
     _run(
-        lambda: ChrononRepository(vault=vault).write_agents_md(filename),
+        lambda: ChrononRepository(vault=_active_vault()).write_agents_md(filename),
         json_output,
     )
 
@@ -803,35 +773,23 @@ def version() -> None:
 
 
 def main() -> None:
-    argv = sys.argv[1:]
-    # `init`, `add-vault`, `list-vaults`, `remove-vault` manage repositories or
-    # the registry itself and don't declare --vault, so _command_accepts_vault
-    # keeps the splice below from ever touching their own positional args.
-    if argv and _command_accepts_vault(argv[0]):
-        argv = _splice_positional_vault(argv, slot=1)
-    app(args=argv, prog_name="chronon")
+    app(prog_name="chronon")
 
 
 def ls_main() -> None:
-    ls_app(args=_splice_positional_vault(sys.argv[1:], slot=0), prog_name="chronon-ls")
+    ls_app(prog_name="chronon-ls")
 
 
 def cat_main() -> None:
-    cat_app(
-        args=_splice_positional_vault(sys.argv[1:], slot=0), prog_name="chronon-cat"
-    )
+    cat_app(prog_name="chronon-cat")
 
 
 def write_main() -> None:
-    write_app(
-        args=_splice_positional_vault(sys.argv[1:], slot=0), prog_name="chronon-write"
-    )
+    write_app(prog_name="chronon-write")
 
 
 def commit_main() -> None:
-    commit_app(
-        args=_splice_positional_vault(sys.argv[1:], slot=0), prog_name="chronon-commit"
-    )
+    commit_app(prog_name="chronon-commit")
 
 
 if __name__ == "__main__":

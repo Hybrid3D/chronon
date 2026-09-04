@@ -166,11 +166,13 @@ chronon list-vaults
 chronon remove-vault myvault               # 레지스트리에서만 제거, 저장소는 그대로
 
 # 어디서든 이름으로 접근
-chronon status myvault
-chronon diff myvault docs.yml --from 2026-08-01
+chronon --vault myvault status
+chronon --vault myvault diff docs.yml --from 2026-08-01
+# 짧게는 -v
+chronon -v myvault status docs.yml
 ```
 
-`[vault]` 자리는 명령어 바로 뒤에 등록된 이름을 쓰면 자동으로 인식됩니다(내부적으로는 `--vault myvault`와 동일). 리소스 이름이 등록된 vault 이름과 우연히 같으면 `--vault`를 명시하거나 경로 앞에 `./`를 붙여 리소스로 강제합니다.
+`--vault`/`-v`는 최상위 전역 옵션이므로 명령어 앞에 둡니다. 생략하면 현재 디렉터리에서 저장소 루트를 찾습니다.
 
 ## 에이전트 문서 (MCP 없이)
 

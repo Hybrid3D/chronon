@@ -5,7 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from chronon.api.operations import ChrononRepository, init_repository
-from chronon.cli import _splice_positional_vault, app, main
+from chronon.cli import app, main
 from chronon.core import vaults
 from chronon.core.errors import ChrononError, FileError, InvalidArgument
 
@@ -119,13 +119,9 @@ def test_cli_add_list_remove_vault(tmp_path: Path) -> None:
     ).output.strip() == json.dumps({"vaults": []}, ensure_ascii=False, indent=2).strip()
 
 
-def test_cli_init_directory_matching_a_vault_name_is_not_spliced(
+def test_cli_init_accepts_a_directory_matching_a_vault_name(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """`init` takes no --vault, so `_command_accepts_vault` must exclude it —
-    a bare DIRECTORY argument that happens to match a registered vault name
-    (here also literally "proj") must be treated as a directory, not spliced
-    into `--vault proj` (which `init` doesn't understand and would reject)."""
     other_root = tmp_path / "other"
     runner.invoke(app, ["init", str(other_root), "--register", "proj"])
 
@@ -145,7 +141,7 @@ def test_cli_init_register_registers_a_vault_in_one_step(tmp_path: Path) -> None
     assert vaults.resolve_vault("mine") == root.resolve()
 
 
-# ── CLI: --vault works from any cwd, without positional shorthand ──────────
+# ── CLI: global --vault/-v works from any cwd ──────────────────────────────
 
 
 def test_cli_explicit_vault_flag_works_from_unrelated_cwd(
@@ -159,52 +155,38 @@ def test_cli_explicit_vault_flag_works_from_unrelated_cwd(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    assert runner.invoke(app, ["add", "docs.yml", "--vault", "mine"]).exit_code == 0
+    assert runner.invoke(app, ["--vault", "mine", "add", "docs.yml"]).exit_code == 0
     rev = json.loads(
-        runner.invoke(app, ["read", "docs.yml", "--vault", "mine", "--json"]).output
+        runner.invoke(app, ["-v", "mine", "read", "docs.yml", "--json"]).output
     )["working_revision"]
     committed = runner.invoke(
         app,
-        ["commit", "docs.yml", "--vault", "mine", "-m", "initial", "--if-match", rev],
+        ["--vault", "mine", "commit", "docs.yml", "-m", "initial", "--if-match", rev],
     )
     assert committed.exit_code == 0, committed.output
 
-    status = runner.invoke(app, ["status", "docs.yml", "--vault", "mine", "--json"])
+    status = runner.invoke(app, ["--vault", "mine", "status", "docs.yml", "--json"])
     assert json.loads(status.output)["state"] == "clean"
 
 
-# ── positional vault shorthand: `chronon <command> <vault> <resource>` ─────
+# ── global option discoverability and entry point ──────────────────────────
 
 
-def test_splice_positional_vault_rewrites_registered_name(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "proj"
-    init_repository(root)
-    vaults.add_vault("mine", root)
+def test_cli_help_shows_vault_as_a_global_option() -> None:
+    root_help = runner.invoke(app, ["--help"])
+    assert root_help.exit_code == 0
+    assert "--vault" in root_help.output
+    assert "-v" in root_help.output
 
-    argv = ["diff", "mine", "docs.yml", "--from", "7d ago"]
-    spliced = _splice_positional_vault(argv, slot=1)
-    assert spliced == ["diff", "docs.yml", "--from", "7d ago", "--vault", "mine"]
-
-
-def test_splice_positional_vault_leaves_unregistered_tokens_alone(
-    tmp_path: Path,
-) -> None:
-    argv = ["diff", "docs.yml", "--from", "7d ago"]
-    assert _splice_positional_vault(argv, slot=1) == argv
+    command_help = runner.invoke(app, ["diff", "--help"])
+    assert command_help.exit_code == 0
+    assert "--vault" not in command_help.output
 
 
-def test_splice_positional_vault_ignores_flags_in_slot(tmp_path: Path) -> None:
-    argv = ["diff", "--json", "docs.yml"]
-    assert _splice_positional_vault(argv, slot=1) == argv
-
-
-def test_cli_main_accepts_positional_vault_shorthand(
+def test_cli_main_accepts_global_vault_option(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    """`chronon <command> <vault> <resource>` must work through the real
-    entry point (main()), from a cwd that has nothing to do with the vault."""
+    """The real entry point accepts `chronon --vault NAME COMMAND ...`."""
     root = tmp_path / "proj"
     assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
     (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
@@ -212,9 +194,15 @@ def test_cli_main_accepts_positional_vault_shorthand(
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    monkeypatch.setattr("sys.argv", ["chronon", "add", "mine", "docs.yml"])
+    monkeypatch.setattr("sys.argv", ["chronon", "--vault", "mine", "add", "docs.yml"])
 
     with pytest.raises(SystemExit) as excinfo:
         main()
     assert excinfo.value.code in (0, None)
     assert "docs.yml" in capsys.readouterr().out
+
+
+def test_cli_rejects_old_command_local_vault_option() -> None:
+    result = runner.invoke(app, ["status", "--vault", "mine"])
+    assert result.exit_code == 2
+    assert "No such option" in result.output
