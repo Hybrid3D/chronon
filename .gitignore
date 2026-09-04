@@ -6,3 +6,4 @@
 *.py[cod]
 *.egg-info/
 .claude/settings.local.json
+/PLAN.md
