@@ -9,6 +9,14 @@ The registry itself lives outside any single repository, at
 ``$CHRONON_CONFIG_HOME/vaults.toml`` (default ``~/.config/chronon/vaults.toml``),
 because it has to be readable before we know which repository we are talking
 about. Nothing here mutates repository state; it only resolves a name to a path.
+
+A second, unrelated file lives *inside* a plain workspace directory (one that is
+not itself a vault): ``.chronon-workspace``, which pins that directory tree to
+one registered vault name so ``chronon`` commands there resolve it without a
+``--vault`` flag, the same way ``.chronon/config.toml`` lets commands run
+without a flag from inside the vault itself. `chronon set-vault` writes it;
+`resolve_root` in `store.py` reads it as a fallback once directory discovery
+of an actual vault fails.
 """
 
 from __future__ import annotations
@@ -26,6 +34,8 @@ from .errors import FileError, InvalidArgument
 from .lock import exclusive_file_lock
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+WORKSPACE_FILE = ".chronon-workspace"
 
 
 def config_home() -> Path:
@@ -153,3 +163,75 @@ def resolve_vault(name: str) -> Path:
             hint=f"run 'chronon remove-vault {name}' or re-init at that path",
         )
     return path
+
+
+def _find_workspace_file(start: Path) -> Path | None:
+    for candidate in (start, *start.parents):
+        marker = candidate / WORKSPACE_FILE
+        if marker.is_file():
+            return marker
+    return None
+
+
+def read_workspace_vault(start: str | Path | None = None) -> str | None:
+    """Return the vault name pinned above `start` (default: cwd), if any.
+
+    Walks upward from `start` looking for `.chronon-workspace`, the same way
+    `discover_root` walks upward looking for `.chronon/`. Returns None rather
+    than raising when no pin exists, so callers can fall back further.
+    """
+    current = Path(start or Path.cwd()).expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    path = _find_workspace_file(current)
+    if path is None:
+        return None
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise FileError("workspace vault pin is invalid", path=str(path)) from exc
+    vault = data.get("vault")
+    if not isinstance(vault, str) or not vault:
+        raise FileError(
+            "workspace vault pin is invalid",
+            path=str(path),
+            hint='expected a \'vault = "<name>"\' entry',
+        )
+    return vault
+
+
+def set_vault(name: str, directory: str | Path = ".") -> dict[str, Any]:
+    """Pin `directory`'s tree to registered vault `name` via `.chronon-workspace`.
+
+    Once pinned, `chronon` commands run anywhere under `directory` without
+    `--vault` resolve to `name` — see `resolve_root` in `store.py`. Requires
+    `name` to already be registered, so the pin can never point at nothing.
+    """
+    _validate_name(name)
+    resolve_vault(name)
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
+        raise InvalidArgument(
+            "workspace destination must be an existing directory", path=str(root)
+        )
+    path = root / WORKSPACE_FILE
+    created = not path.exists()
+    _atomic_write(
+        path,
+        "# managed by 'chronon set-vault' — do not edit while chronon is running\n"
+        f"vault = {json.dumps(name)}\n",
+    )
+    return {"path": str(path), "vault": name, "created": created}
+
+
+def unset_vault(directory: str | Path = ".") -> dict[str, Any]:
+    """Remove `directory`'s `.chronon-workspace` pin, if one exists there."""
+    root = Path(directory).expanduser().resolve()
+    path = root / WORKSPACE_FILE
+    if not path.is_file():
+        raise InvalidArgument("no workspace vault pin here", path=str(path))
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise FileError("cannot remove workspace vault pin", path=str(path)) from exc
+    return {"path": str(path), "removed": True}

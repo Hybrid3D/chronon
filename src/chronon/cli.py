@@ -18,6 +18,8 @@ from chronon.api.operations import (
     init_repository,
     list_vaults,
     remove_vault,
+    set_vault,
+    unset_vault,
     write_agent_instructions,
 )
 from chronon.core.errors import ChrononError, InvalidArgument
@@ -402,6 +404,30 @@ def remove_vault_command(
     name: str, json_output: bool = typer.Option(False, "--json")
 ) -> None:
     _run(lambda: remove_vault(name), json_output)
+
+
+@app.command("set-vault")
+def set_vault_command(
+    name: str = typer.Argument(..., help="Registered vault name (see 'chronon list-vaults')."),
+    directory: Path = typer.Argument(
+        Path("."), help="Workspace directory to pin (default: current directory)."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Pin a directory tree to a vault, so plain 'chronon' commands there
+    resolve it without --vault. Writes .chronon-workspace; see 'unset-vault'."""
+    _run(lambda: set_vault(name, directory), json_output)
+
+
+@app.command("unset-vault")
+def unset_vault_command(
+    directory: Path = typer.Argument(
+        Path("."), help="Workspace directory to unpin (default: current directory)."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Remove a directory's vault pin written by 'chronon set-vault'."""
+    _run(lambda: unset_vault(directory), json_output)
 
 
 @app.command()

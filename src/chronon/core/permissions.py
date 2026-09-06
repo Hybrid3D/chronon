@@ -50,9 +50,17 @@ WRITE_COMMANDS = (
 )
 # Never generated. `discard` destroys uncommitted work that no history can
 # restore; `accept` silently adopts an edit Chronon deliberately flagged; the
-# rest reshape the repository or the per-user vault registry. These are exactly
-# the moments a human should be asked.
-EXCLUDED_COMMANDS = ("discard", "accept", "init", "add-vault", "remove-vault")
+# rest reshape the repository, the per-user vault registry, or which vault a
+# workspace resolves to. These are exactly the moments a human should be asked.
+EXCLUDED_COMMANDS = (
+    "discard",
+    "accept",
+    "init",
+    "add-vault",
+    "remove-vault",
+    "set-vault",
+    "unset-vault",
+)
 
 
 def permission_rules(vault: str | None = None, write: bool = True) -> list[str]:

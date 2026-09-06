@@ -88,6 +88,18 @@ def remove_vault(name: str) -> dict[str, Any]:
     return _remove_vault(name)
 
 
+def set_vault(name: str, directory: str | Path = ".") -> dict[str, Any]:
+    from chronon.core.vaults import set_vault as _set_vault
+
+    return _set_vault(name, directory)
+
+
+def unset_vault(directory: str | Path = ".") -> dict[str, Any]:
+    from chronon.core.vaults import unset_vault as _unset_vault
+
+    return _unset_vault(directory)
+
+
 def write_agent_instructions(
     directory: str | Path = ".",
     vault: str | None = None,
