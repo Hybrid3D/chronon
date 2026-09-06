@@ -1,9 +1,9 @@
 # Chronon
 
-Chronon is a local version history for individual text documents. Each tracked
-file gets its own linear, immutable timeline, time-based lookup, and structural
-diffs for YAML and JSON. It works alongside Git, but does not call or replace
-Git.
+Chronon is local version control for text documents managed by AI, especially
+Markdown files. Each tracked file gets its own linear, immutable timeline,
+time-based lookup, and structural diffs for YAML and JSON. It works alongside
+Git but neither calls nor replaces it.
 
 Chronon can be used in three ways:
 
@@ -14,6 +14,50 @@ Chronon can be used in three ways:
 > **Project status:** alpha. Manual commit mode is implemented. `--mode auto` is
 > reserved but intentionally returns `not_implemented`. Before relying on
 > Chronon as the only copy of important history, read [Data and backups](#data-and-backups).
+
+## Overview
+
+Instead of letting an agent edit a document directly and lose the context of the
+change, Chronon gives each managed file its own immutable history, working
+state, diff, validation, and explicit commit. This history is local and
+independent of the surrounding Git repository.
+
+Every commit requires a non-empty message. The message records why a person or
+AI made the change, so the history remains meaningful to both future agents and
+human reviewers. Chronon also allows limited scratch edits before a commit, so
+an agent can gather related changes, inspect the diff, and then record them
+together with one meaningful message.
+
+A **vault** is the named collection of files an AI project is configured to
+manage. It is an initialized Chronon repository registered in the user's vault
+registry. A user can register any number of vaults, such as `knowledge`,
+`research`, or `product-docs`. The name selects that collection without exposing
+its filesystem path or requiring the AI client to run inside the vault directory.
+
+From a separate AI client project that is not itself a vault, run
+`chronon agent-setup --vault knowledge`. Chronon writes vault-specific guidance
+that selects `knowledge` as that project's target vault. The agent then manages
+that vault's documents through Chronon rather than direct filesystem operations.
+
+```mermaid
+flowchart LR
+    subgraph client[AI client project]
+        instructions["CHRONON.md<br/>vault: knowledge"]
+        agent[AI agent]
+    end
+
+    instructions --> agent
+    agent -->|Chronon operations<br/>selected vault: knowledge| chronon[Chronon]
+    chronon -->|resolves registered name| vault["Knowledge vault<br/>AI-managed files + .chronon history"]
+    agent -.->|direct filesystem access<br/>to managed documents is prohibited| vault
+```
+
+For a vault-configured AI workspace, the agent reads and writes managed files
+only through Chronon. The generated guidance prohibits direct filesystem access
+to the vault's raw files, so every AI change keeps its tracking, revision
+checks, scratch safety, and history. This is a tool-use boundary for the AI
+agent, not an operating-system access-control boundary: a person with
+filesystem permissions can still open the vault files directly.
 
 ## Requirements
 
@@ -41,8 +85,21 @@ chronon
 chronon-mcp
 ```
 
-`chronon` is the single human/CLI-agent entry point. `chronon-mcp` is optional
-and is only needed by clients that integrate through MCP instead of a shell.
+`chronon` is the entry point for people and shell-based automation. For AI
+clients, prefer `chronon-mcp`: it exposes Chronon as structured MCP tools and
+avoids parsing shell output. Use the CLI when the client cannot use MCP.
+
+### From PyPI (recommended)
+
+Install the published package:
+
+```bash
+uv tool install chronon-vcs
+# or
+pipx install chronon-vcs
+```
+
+Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
 
 ### From GitHub
 
@@ -70,18 +127,6 @@ installed offline:
 ```bash
 pipx install ./chronon_vcs-0.2.1-py3-none-any.whl
 ```
-
-### From PyPI
-
-Once `chronon-vcs` is published, this is the shortest path:
-
-```bash
-uv tool install chronon-vcs
-# or
-pipx install chronon-vcs
-```
-
-Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
 
 ### Platform prerequisites
 
