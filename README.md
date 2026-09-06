@@ -106,15 +106,15 @@ Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
 No clone is required. Install a released tag directly:
 
 ```bash
-uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
+uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.2"
 # or
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.2"
 
 chronon --version
 ```
 
 Pinning a tag is deliberate: it is the difference between a reproducible
-install and whatever `main` happens to contain. Omit `@v0.2.1` only if you
+install and whatever `main` happens to contain. Omit `@v0.2.2` only if you
 intentionally want the development branch.
 
 To move to a newer tag, install again with the new tag and `--force`
@@ -125,7 +125,7 @@ Every tag also publishes a built wheel and sdist on the
 installed offline:
 
 ```bash
-pipx install ./chronon_vcs-0.2.1-py3-none-any.whl
+pipx install ./chronon_vcs-0.2.2-py3-none-any.whl
 ```
 
 ### Platform prerequisites
@@ -161,7 +161,7 @@ option that makes the Python launcher available, then:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # Close and reopen PowerShell, then:
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.2"
 chronon --version
 ```
 
