@@ -53,6 +53,7 @@ WRITE_COMMANDS = (
 # rest reshape the repository, the per-user vault registry, or which vault a
 # workspace resolves to. These are exactly the moments a human should be asked.
 EXCLUDED_COMMANDS = (
+    "admin",  # Human-only; never automatically allowlisted for agents.
     "discard",
     "accept",
     "init",

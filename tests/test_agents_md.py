@@ -11,6 +11,7 @@ from chronon.api.operations import (
 )
 from chronon.cli import app
 from chronon.core.docs import (
+    ADMIN_AGENT_RULE,
     BEGIN_MARKER,
     END_MARKER,
     LINK_BEGIN_MARKER,
@@ -23,6 +24,29 @@ from chronon.core.docs import (
 from chronon.core.errors import InvalidArgument
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("vault", [None, "knowledge"])
+def test_agent_setup_puts_admin_prohibition_first_in_guide_and_links(
+    tmp_path: Path, monkeypatch, vault: str | None
+) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    if vault:
+        init_repository(tmp_path / "private storage", register_vault=vault)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    write_agent_instructions(
+        workspace, vault=vault, link_targets=["AGENTS.md", "CLAUDE.md"]
+    )
+
+    guide = (workspace / "CHRONON.md").read_text(encoding="utf-8")
+    assert ADMIN_AGENT_RULE in guide
+    assert guide.index("### Rule 1:") < guide.index("### Choose one interface")
+    for filename in ("AGENTS.md", "CLAUDE.md"):
+        pointer = (workspace / filename).read_text(encoding="utf-8")
+        assert f"**Rule 1:** {ADMIN_AGENT_RULE}" in pointer
+        assert pointer.index("**Rule 1:**") < pointer.index("Managed documents")
 
 
 def test_ensure_agents_md_creates_file(tmp_path: Path) -> None:

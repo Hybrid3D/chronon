@@ -95,15 +95,15 @@ Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
 No clone is required. Install a released tag directly:
 
 ```bash
-uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.3"
+uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
 # or
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.3"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
 
 chronon --version
 ```
 
 Pinning a tag is deliberate: it is the difference between a reproducible
-install and whatever `main` happens to contain. Omit `@v0.2.3` only if you
+install and whatever `main` happens to contain. Omit `@v0.2.4` only if you
 intentionally want the development branch.
 
 To move to a newer tag, install again with the new tag and `--force`
@@ -114,7 +114,7 @@ Every tag also publishes a built wheel and sdist on the
 installed offline:
 
 ```bash
-pipx install ./chronon_vcs-0.2.3-py3-none-any.whl
+pipx install ./chronon_vcs-0.2.4-py3-none-any.whl
 ```
 
 ### Platform prerequisites
@@ -150,7 +150,7 @@ option that makes the Python launcher available, then:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # Close and reopen PowerShell, then:
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.3"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
 chronon --version
 ```
 
@@ -307,6 +307,55 @@ chronon add-vault work /absolute/path/to/an/initialized/repository
 chronon list-vaults
 chronon remove-vault work  # removes only the name; files and history remain
 ```
+
+`chronon list-vaults` shows names only. Its `--json` output and the MCP
+`list_vaults` tool also omit physical storage paths:
+
+```json
+{"vaults": [{"name": "work"}]}
+```
+
+The human administrator can inspect a registered storage path explicitly:
+
+```bash
+chronon admin vault-path work
+chronon admin vault-path work --json
+```
+
+This reports the registered path even if the directory has moved or is
+temporarily unavailable. The command is not exposed as an MCP tool.
+
+To change where an existing vault name points, the human administrator runs:
+
+```bash
+chronon admin set-vault-path work /new/path/to/an/initialized/repository
+```
+
+This changes only the registry entry; it never moves files or history. The new
+path must already be a Chronon repository root. The old path may be unavailable
+(for example, after moving the directory yourself). An unknown vault name is
+rejected, and repeating the same path makes no changes. Add `--json` for
+`name`, `previous_path`, `path`, and `updated` in the result. This command is
+also not exposed as an MCP tool.
+
+`chronon add-vault` registers new names and accepts an identical registration,
+but no longer overwrites an existing name with a different path. This also
+applies to MCP `add_vault` and registration through `init --register`.
+`chronon set-vault` selects a workspace's vault; it does not change its storage
+path.
+
+Generated agent instructions make it **Rule 1** to never invoke the Chronon
+`admin` command group, directly or indirectly, and never discover physical
+vault paths through registry reads, scripts, library calls, or other agents.
+Administrative work must be performed by the human outside the agent session.
+Re-run `chronon agent-setup` in existing workspaces to refresh this rule in
+`CHRONON.md` and its links from client instruction files.
+
+This is an agent instruction, not authentication or filesystem isolation.
+Other responses (including `root` in resource/directory listings), some errors,
+and the registry can still reveal physical paths. An agent with the same shell
+and filesystem permissions as the administrator can bypass the instruction.
+Preventing that requires a separate execution or access-control boundary.
 
 ## Everyday CLI workflow
 
@@ -482,6 +531,8 @@ Run `chronon COMMAND --help` for every option.
 | `validate FILE` | Validate current content |
 | `agent-setup [PATH]` | Create or refresh CHRONON.md and point the workspace's AI instruction files at it (`--permissions` to allowlist safe commands, `--check` to verify only) |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
+| `admin vault-path NAME` | Show the registered storage path for human administration |
+| `admin set-vault-path NAME PATH` | Change an existing vault's registered storage path without moving files |
 | `set-vault NAME [PATH]`, `unset-vault [PATH]` | Pin/unpin a workspace directory to a vault (writes/removes `.chronon-workspace`) |
 
 Use `chronon --version` (or `chronon -V`) to print the installed version. Add
@@ -625,6 +676,9 @@ Deliberately **not** allowlisted, so these still stop for approval: `discard`
 Chronon flagged on purpose), and `init` / `add-vault` / `remove-vault` /
 `set-vault` / `unset-vault` (reshape the repository, the per-user vault
 registry, or which vault a workspace resolves to).
+
+The `admin` command group is also never allowlisted. The generated instructions
+prohibit agents from invoking it, including through another command or tool.
 
 When `--vault` is given, each command is allowlisted in both
 `chronon <command>` and `chronon --vault <name> <command>` form, because the

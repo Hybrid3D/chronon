@@ -37,6 +37,16 @@ LINK_BEGIN_MARKER = "<!-- chronon:link:begin -->"
 LINK_END_MARKER = "<!-- chronon:link:end -->"
 DEFAULT_AGENTS_MD = "CHRONON.md"
 
+# Shared by the generated guide, its client pointers, and MCP instructions.
+ADMIN_AGENT_RULE = (
+    "Never invoke the Chronon admin command group, directly or indirectly. "
+    "Do not bypass this rule through scripts, library calls, delegated agents, "
+    "or direct access to the vault registry. Do not discover or reconstruct "
+    "physical vault paths. Use vault names and vault-relative resource paths. "
+    "If administration is required, ask the human administrator to perform it "
+    "outside the agent session; do not ask them to disclose physical paths."
+)
+
 # Instruction files AI clients load by themselves. `chronon agent-setup` links the
 # generated guide from whichever of these already exist, so the user does not
 # have to wire it up (and re-copy it) by hand.
@@ -121,6 +131,10 @@ intended vault from the MCP server's working directory."""
 
     return f"""{BEGIN_MARKER}
 ## {heading} (per-file version history)
+
+### Rule 1: Human administration only
+
+{ADMIN_AGENT_RULE}
 
 {context}
 
@@ -390,6 +404,8 @@ def render_link_section(
     )
     return f"""{LINK_BEGIN_MARKER}
 ## {heading}
+
+**Rule 1:** {ADMIN_AGENT_RULE}
 
 Managed documents in this workspace are read and written through **chronon**,
 never through direct filesystem tools.{target} The commands, interface order,

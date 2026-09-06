@@ -66,14 +66,35 @@ def init_repository(
 
 
 def list_vaults() -> dict[str, Any]:
+    """List registered vault names without exposing their storage paths."""
     from chronon.core.vaults import list_vaults as _list_vaults
 
-    return {
-        "vaults": [
-            {"name": name, "path": path}
-            for name, path in sorted(_list_vaults().items())
-        ]
-    }
+    return {"vaults": [{"name": name} for name in sorted(_list_vaults())]}
+
+
+def admin_vault_path(name: str) -> dict[str, str]:
+    """Return a registered path for human administration, even if it is offline.
+
+    This is a CLI-only administration operation, not an authorization boundary.
+    """
+    from chronon.core.vaults import list_vaults as _list_vaults
+
+    vaults = _list_vaults()
+    if name not in vaults:
+        raise InvalidArgument(
+            "no such vault", name=name, hint="run 'chronon list-vaults'"
+        )
+    return {"name": name, "path": vaults[name]}
+
+
+def admin_set_vault_path(name: str, path: str | Path) -> dict[str, Any]:
+    """Change an existing registration for human administration, without moving files.
+
+    This is a CLI-only administration operation, not an authorization boundary.
+    """
+    from chronon.core.vaults import set_vault_path
+
+    return set_vault_path(name, path)
 
 
 def add_vault(name: str, path: str | Path) -> dict[str, Any]:
