@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="460" viewBox="0 0 1120 460" role="img" aria-labelledby="title description">
+  <title id="title">Accessing a Chronon vault</title>
+  <desc id="description">People use the CLI directly. Agents use MCP when available or the CLI as a fallback. Both routes go through Chronon to a selected vault. Each document has its own immutable revision timeline, independent of Git.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M1 1L7 4L1 7" fill="none" stroke="#555" stroke-width="1.5"/>
+    </marker>
+    <marker id="mcp-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M1 1L7 4L1 7" fill="none" stroke="#527461" stroke-width="1.5"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; font-size: 19px; fill: #222; }
+      .mono { font-family: Menlo, Consolas, monospace; }
+      .note { font-size: 16px; fill: #555; }
+      .box { fill: #fff; stroke: #777; stroke-width: 1.3; }
+      .route { fill: none; stroke: #555; stroke-width: 1.5; marker-end: url(#arrow); }
+      .box.preferred { fill: #edf4ef; stroke: #728d7c; }
+      .route.preferred { stroke: #527461; marker-end: url(#mcp-arrow); }
+      text.preferred { fill: #3f6650; }
+      .timeline { fill: none; stroke: #777; stroke-width: 1.3; }
+      .revision { fill: #fff; stroke: #555; stroke-width: 1.3; }
+    </style>
+  </defs>
+
+  <rect width="1120" height="460" fill="#fff"/>
+  <text x="40" y="38" font-weight="700">Accessing a Chronon vault</text>
+
+  <!-- People issue commands directly; agents choose an available interface. -->
+  <rect x="40" y="90" width="140" height="56" class="box"/>
+  <text x="110" y="125" text-anchor="middle">Person</text>
+  <text x="40" y="175" class="note">Manual use</text>
+  <path d="M180 118H243" class="route"/>
+  <rect x="250" y="90" width="90" height="56" class="box"/>
+  <text x="295" y="125" class="mono" text-anchor="middle">CLI</text>
+  <path d="M340 118H423" class="route"/>
+
+  <rect x="40" y="250" width="140" height="56" class="box"/>
+  <text x="110" y="285" text-anchor="middle">AI agent</text>
+  <text x="40" y="335" class="note">Natural-language</text>
+  <text x="40" y="357" class="note">requests</text>
+  <path d="M180 278H243" class="route preferred"/>
+  <path d="M215 278V366H243" class="route" stroke-dasharray="5 4"/>
+  <rect x="250" y="250" width="90" height="56" class="box preferred"/>
+  <text x="295" y="285" class="mono preferred" text-anchor="middle">MCP</text>
+  <text x="295" y="238" class="note preferred" text-anchor="middle">preferred</text>
+  <path d="M340 278H423" class="route preferred"/>
+  <rect x="250" y="340" width="90" height="52" class="box"/>
+  <text x="295" y="373" class="mono" text-anchor="middle">CLI</text>
+  <text x="295" y="416" class="note" text-anchor="middle">fallback</text>
+  <path d="M340 366H423" class="route" stroke-dasharray="5 4"/>
+
+  <rect x="430" y="90" width="230" height="302" fill="#f6f8fa" stroke="#555" stroke-width="1.3"/>
+  <rect x="431" y="91" width="228" height="61" fill="#e6edf5"/>
+  <text x="545" y="131" font-weight="700" text-anchor="middle">Chronon</text>
+  <path d="M430 153H660" stroke="#777" stroke-width="1.3"/>
+  <text x="452" y="198">Read / write</text>
+  <text x="452" y="239">Revision checks</text>
+  <text x="452" y="280">Validate / commit</text>
+  <text x="452" y="360" class="note">Local version control</text>
+  <path d="M660 241H747" class="route"/>
+
+  <rect x="754" y="90" width="326" height="302" class="box"/>
+  <rect x="755" y="91" width="324" height="61" fill="#f3eddf"/>
+  <text x="776" y="124" font-weight="700">Vault</text>
+  <text x="846" y="124" class="note">(selected by name)</text>
+  <path d="M754 153H1080" stroke="#777" stroke-width="1.3"/>
+
+  <!-- Each row is an independent document history. -->
+  <text x="776" y="185" class="mono">notes.md</text>
+  <path d="M790 205H1036" class="timeline"/>
+  <g class="revision">
+    <circle cx="790" cy="205" r="5"/><circle cx="872" cy="205" r="5"/><circle cx="954" cy="205" r="5"/>
+  </g>
+  <circle cx="1036" cy="205" r="5" fill="#8a7450"/>
+  <text x="776" y="251" class="mono">config.yml</text>
+  <path d="M790 271H954" class="timeline"/>
+  <g class="revision">
+    <circle cx="790" cy="271" r="5"/><circle cx="872" cy="271" r="5"/>
+  </g>
+  <circle cx="954" cy="271" r="5" fill="#8a7450"/>
+  <text x="776" y="317" class="mono">plan.md</text>
+  <path d="M790 337H872" class="timeline"/>
+  <circle cx="790" cy="337" r="5" class="revision"/>
+  <circle cx="872" cy="337" r="5" fill="#8a7450"/>
+  <text x="776" y="373" class="note">History stored in .chronon/</text>
+
+  <text x="40" y="445" class="note">Each document has its own immutable history, independent of Git.</text>
+</svg>

@@ -39,18 +39,7 @@ From a separate AI client project that is not itself a vault, run
 that selects `knowledge` as that project's target vault. The agent then manages
 that vault's documents through Chronon rather than direct filesystem operations.
 
-```mermaid
-flowchart LR
-    subgraph client[AI client project]
-        instructions["CHRONON.md<br/>vault: knowledge"]
-        agent[AI agent]
-    end
-
-    instructions --> agent
-    agent -->|Chronon operations<br/>selected vault: knowledge| chronon[Chronon]
-    chronon -->|resolves registered name| vault["Knowledge vault<br/>AI-managed files + .chronon history"]
-    agent -.->|direct filesystem access<br/>to managed documents is prohibited| vault
-```
+![People use the CLI directly. Agents use MCP (preferred) or CLI. Both access a selected vault through Chronon, which keeps a separate immutable history for each file.](https://raw.githubusercontent.com/Hybrid3D/chronon/main/docs/images/chronon-overview.png)
 
 For a vault-configured AI workspace, the agent reads and writes managed files
 only through Chronon. The generated guidance prohibits direct filesystem access
