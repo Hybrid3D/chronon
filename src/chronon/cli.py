@@ -14,6 +14,8 @@ from chronon import __version__
 from chronon.api.operations import (
     ChrononRepository,
     add_vault,
+    admin_set_vault_path,
+    admin_vault_path,
     check_agent_instructions,
     init_repository,
     list_vaults,
@@ -66,6 +68,11 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Document-oriented local history indexed by time.",
 )
+admin_app = typer.Typer(
+    no_args_is_help=True,
+    help="Human administrator commands. AI agents must not invoke this group.",
+)
+app.add_typer(admin_app, name="admin")
 
 VAULT_HELP = (
     "Registered vault name (see 'chronon list-vaults'). Resolved from the "
@@ -243,7 +250,7 @@ def _emit(value: Any, json_output: bool = False) -> None:
     elif "vaults" in value:
         vaults = value["vaults"]
         for entry in vaults:
-            typer.echo(f"{entry['name']:<16} {entry['path']}")
+            typer.echo(entry["name"])
         if not vaults:
             typer.echo("No registered vaults")
     elif value.get("checked"):
@@ -396,7 +403,49 @@ def add_vault_command(
 
 @app.command("list-vaults")
 def list_vaults_command(json_output: bool = typer.Option(False, "--json")) -> None:
+    """List registered vault names."""
     _run(lambda: list_vaults(), json_output)
+
+
+@admin_app.command("vault-path")
+def admin_vault_path_command(
+    name: str = typer.Argument(..., help="Registered vault name."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show a vault's physical storage path for the human administrator."""
+
+    def action() -> Any:
+        result = admin_vault_path(name)
+        return result if json_output else result["path"]
+
+    _run(action, json_output)
+
+
+@admin_app.command("set-vault-path")
+def admin_set_vault_path_command(
+    name: str = typer.Argument(
+        ..., metavar="NAME", help="Existing registered vault name."
+    ),
+    directory: Path = typer.Argument(
+        ...,
+        metavar="PATH",
+        help="New storage path, pointing to an initialized Chronon repository root.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Change a vault's registered storage path; never move files or history."""
+
+    def action() -> Any:
+        result = admin_set_vault_path(name, directory)
+        if json_output:
+            return result
+        if result["updated"]:
+            return (
+                f"Updated vault {name}: {result['previous_path']} -> {result['path']}"
+            )
+        return f"Vault {name} already points to {result['path']}"
+
+    _run(action, json_output)
 
 
 @app.command("remove-vault")

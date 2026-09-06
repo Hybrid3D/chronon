@@ -11,12 +11,14 @@ from chronon.api.operations import init_repository as _init_repository
 from chronon.api.operations import list_vaults as _list_vaults
 from chronon.api.operations import remove_vault as _remove_vault
 from chronon.api.operations import write_agent_instructions as _write_agent_instructions
+from chronon.core.docs import ADMIN_AGENT_RULE
 from chronon.core.errors import ChrononError
 from chronon.core.text import json_safe
 
 mcp = FastMCP(
     "chronon",
     instructions=(
+        f"Rule 1: {ADMIN_AGENT_RULE} "
         "Chronon MCP manages local vault resources with immutable per-file "
         "history. Use these MCP tools, not direct filesystem writes or the "
         "Chronon CLI, for managed resources. Use the exact user-selected vault "
@@ -38,13 +40,13 @@ def _safe(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 
 @mcp.tool()
 def list_vaults() -> dict[str, Any]:
-    """List registered vaults (name -> repository root) from the global registry."""
+    """List registered vault names without exposing their storage paths."""
     return _safe(lambda: _list_vaults())
 
 
 @mcp.tool()
 def add_vault(name: str, path: str) -> dict[str, Any]:
-    """Register an already-'chronon init'-ed directory under a global vault name."""
+    """Register an initialized directory without changing an existing name's path."""
     return _safe(lambda: _add_vault(name, path))
 
 

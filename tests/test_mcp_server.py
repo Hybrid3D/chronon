@@ -1,7 +1,11 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from chronon.api.operations import ChrononRepository, init_repository
+from chronon.core import vaults
+from chronon.core.docs import ADMIN_AGENT_RULE
 from chronon.mcp_server import mcp
 
 
@@ -22,17 +26,28 @@ def test_mcp_exposes_manual_versioning_tools() -> None:
         "write_agent_instructions",
     } <= names
     assert "lock_resource" not in names
+    assert not any("admin" in name or "vault_path" in name for name in names)
 
 
 def test_mcp_server_instructions_match_safe_tool_first_workflow() -> None:
     instructions = mcp.instructions or ""
 
+    assert instructions.startswith(f"Rule 1: {ADMIN_AGENT_RULE}")
     assert "Use these MCP tools" in instructions
     assert "not direct filesystem writes or the Chronon CLI" in instructions
     assert "working_revision" in instructions
     assert "expected_revision" in instructions
     assert "revision_conflict" in instructions
     assert "with an error field" in instructions
+
+
+def test_mcp_lists_vault_names_without_paths(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    init_repository(tmp_path / "private storage", register_vault="mine")
+
+    _, result = asyncio.run(mcp.call_tool("list_vaults", {}))
+
+    assert result == {"vaults": [{"name": "mine"}]}
 
 
 def test_mcp_tool_calls_shared_operations(tmp_path: Path, monkeypatch) -> None:
@@ -55,6 +70,29 @@ def test_mcp_tool_calls_shared_operations(tmp_path: Path, monkeypatch) -> None:
     )
     assert result["committed"] is True
     assert result["commit"]["seq"] == 1
+
+
+@pytest.mark.parametrize("tool_name", ["add_vault", "initialize_repository"])
+def test_mcp_registration_cannot_change_an_existing_vault_path(
+    tmp_path: Path, monkeypatch, tool_name: str
+) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    old_root, new_root = tmp_path / "old", tmp_path / "new"
+    init_repository(old_root, register_vault="mine")
+    init_repository(new_root)
+    before = vaults.registry_path().read_bytes()
+    arguments = (
+        {"name": "mine", "path": str(new_root)}
+        if tool_name == "add_vault"
+        else {"directory": str(new_root), "register_vault": "mine"}
+    )
+
+    _, result = asyncio.run(mcp.call_tool(tool_name, arguments))
+
+    assert result["error"] == "invalid_argument"
+    assert "human administrator" in result["hint"]
+    assert str(old_root) not in str(result)
+    assert vaults.registry_path().read_bytes() == before
 
 
 def test_mcp_returns_structured_domain_errors(tmp_path: Path, monkeypatch) -> None:

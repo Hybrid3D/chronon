@@ -95,7 +95,7 @@ def _load() -> dict[str, str]:
 
 def _save(vaults: dict[str, str]) -> None:
     lines = [
-        "# managed by 'chronon add-vault'/'remove-vault' — do not edit while chronon is running",
+        "# managed by Chronon vault registry commands — do not edit while chronon is running",
         "[vaults]",
     ]
     for name in sorted(vaults):
@@ -119,8 +119,7 @@ def list_vaults() -> dict[str, str]:
     return _load()
 
 
-def add_vault(name: str, path: str | Path) -> dict[str, Any]:
-    _validate_name(name)
+def _repository_root(path: str | Path) -> Path:
     resolved = Path(path).expanduser().resolve()
     if not (resolved / ".chronon" / "config.toml").is_file():
         raise FileError(
@@ -128,12 +127,50 @@ def add_vault(name: str, path: str | Path) -> dict[str, Any]:
             path=str(resolved),
             hint="run 'chronon init' there first, or pass the repository root",
         )
+    return resolved
+
+
+def add_vault(name: str, path: str | Path) -> dict[str, Any]:
+    """Register a new name, or leave an identical registration unchanged."""
+    _validate_name(name)
+    resolved = _repository_root(path)
     with exclusive_file_lock(config_home() / "vaults.lock"):
         vaults = _load()
         created = name not in vaults
-        vaults[name] = str(resolved)
-        _save(vaults)
+        if not created and vaults[name] != str(resolved):
+            raise InvalidArgument(
+                "vault name is already registered to a different path",
+                name=name,
+                hint="ask the human administrator to run "
+                f"'chronon admin set-vault-path {name} PATH' outside the agent session",
+            )
+        if created:
+            vaults[name] = str(resolved)
+            _save(vaults)
     return {"name": name, "path": str(resolved), "created": created}
+
+
+def set_vault_path(name: str, path: str | Path) -> dict[str, Any]:
+    """Repoint an existing registration without moving files or requiring the old root."""
+    _validate_name(name)
+    with exclusive_file_lock(config_home() / "vaults.lock"):
+        vaults = _load()
+        if name not in vaults:
+            raise InvalidArgument(
+                "no such vault", name=name, hint="run 'chronon list-vaults'"
+            )
+        resolved = _repository_root(path)
+        previous_path = vaults[name]
+        updated = previous_path != str(resolved)
+        if updated:
+            vaults[name] = str(resolved)
+            _save(vaults)
+    return {
+        "name": name,
+        "path": str(resolved),
+        "previous_path": previous_path,
+        "updated": updated,
+    }
 
 
 def remove_vault(name: str) -> dict[str, Any]:

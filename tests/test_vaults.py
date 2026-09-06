@@ -7,7 +7,7 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner
 
-from chronon.api.operations import ChrononRepository, init_repository
+from chronon.api.operations import ChrononRepository, init_repository, list_vaults
 from chronon.cli import app, main
 from chronon.core import vaults
 from chronon.core.errors import ChrononError, FileError, InvalidArgument
@@ -49,7 +49,7 @@ def test_add_list_remove_round_trip(tmp_path: Path) -> None:
     assert vaults.list_vaults() == {"mine": str(root.resolve())}
     assert vaults.resolve_vault("mine") == root.resolve()
 
-    # re-adding the same name updates the path instead of erroring
+    # Re-adding the same name and path is idempotent.
     again = vaults.add_vault("mine", root)
     assert again["created"] is False
 
@@ -75,6 +75,189 @@ def test_invalid_vault_name_rejected(tmp_path: Path) -> None:
         vaults.add_vault("has a space", root)
     with pytest.raises(InvalidArgument):
         vaults.add_vault("looks-valid\n", root)
+    with pytest.raises(InvalidArgument):
+        vaults.set_vault_path("has a space", root)
+
+
+def test_add_vault_cannot_replace_an_existing_path(tmp_path: Path) -> None:
+    old_root, new_root = tmp_path / "old", tmp_path / "new"
+    init_repository(old_root, register_vault="mine")
+    init_repository(new_root)
+    before = vaults.registry_path().read_bytes()
+
+    with pytest.raises(InvalidArgument, match="already registered") as excinfo:
+        vaults.add_vault("mine", new_root)
+
+    assert "chronon admin set-vault-path mine PATH" in excinfo.value.details["hint"]
+    assert str(old_root) not in str(excinfo.value.as_dict())
+    assert vaults.registry_path().read_bytes() == before
+
+
+def test_set_vault_path_preserves_other_registrations(tmp_path: Path) -> None:
+    old_root, new_root = tmp_path / "old", tmp_path / "new"
+    init_repository(old_root, register_vault="mine")
+    init_repository(new_root, register_vault="other")
+    (old_root / "old.txt").write_text("old content", encoding="utf-8")
+    (new_root / "new.txt").write_text("new content", encoding="utf-8")
+
+    result = vaults.set_vault_path("mine", new_root)
+
+    assert result == {
+        "name": "mine",
+        "previous_path": str(old_root.resolve()),
+        "path": str(new_root.resolve()),
+        "updated": True,
+    }
+    assert vaults.list_vaults() == {
+        "mine": str(new_root.resolve()),
+        "other": str(new_root.resolve()),
+    }
+    assert (old_root / "old.txt").read_text(encoding="utf-8") == "old content"
+    assert (new_root / "new.txt").read_text(encoding="utf-8") == "new content"
+    assert not (new_root / "old.txt").exists()
+    assert not (old_root / "new.txt").exists()
+
+
+def test_set_vault_path_is_idempotent_with_relative_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "repo"
+    init_repository(root, register_vault="mine")
+    monkeypatch.chdir(tmp_path)
+    before = vaults.registry_path().read_bytes()
+    modified_at = vaults.registry_path().stat().st_mtime_ns
+
+    result = vaults.set_vault_path("mine", "./repo")
+
+    assert result["updated"] is False
+    assert result["path"] == result["previous_path"] == str(root.resolve())
+    assert vaults.registry_path().read_bytes() == before
+    assert vaults.registry_path().stat().st_mtime_ns == modified_at
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "file", "nested"])
+def test_admin_set_vault_path_rejects_invalid_targets_without_changing_registry(
+    tmp_path: Path, kind: str
+) -> None:
+    root = tmp_path / "repo"
+    init_repository(root, register_vault="mine")
+    target = tmp_path / "invalid"
+    if kind == "directory":
+        target.mkdir()
+    elif kind == "file":
+        target.write_text("not a repository", encoding="utf-8")
+    elif kind == "nested":
+        target = root / "nested"
+        target.mkdir()
+    before = vaults.registry_path().read_bytes()
+
+    result = runner.invoke(
+        app, ["admin", "set-vault-path", "mine", str(target), "--json"]
+    )
+
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.output)["error"] == "file_error"
+    assert vaults.registry_path().read_bytes() == before
+    if kind == "missing":
+        assert not target.exists()
+
+
+def test_admin_set_vault_path_requires_an_existing_registration(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    init_repository(root, register_vault="other")
+    before = vaults.registry_path().read_bytes()
+
+    result = runner.invoke(
+        app, ["admin", "set-vault-path", "missing", str(root), "--json"]
+    )
+
+    assert result.exit_code == 4, result.output
+    assert json.loads(result.output)["error"] == "invalid_argument"
+    assert json.loads(result.output)["name"] == "missing"
+    assert vaults.registry_path().read_bytes() == before
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_admin_set_vault_path_reconnects_a_moved_repository(
+    tmp_path: Path, json_output: bool
+) -> None:
+    old_root, new_root = tmp_path / "old storage", tmp_path / "new storage"
+    init_repository(old_root, register_vault="mine")
+    resource = old_root / "notes.md"
+    resource.write_text("remember this", encoding="utf-8")
+    repository = ChrononRepository(vault="mine")
+    repository.add("notes.md")
+    repository.commit(
+        "notes.md",
+        "initial",
+        expected_revision=repository.read("notes.md")["working_revision"],
+    )
+    history = repository.history("notes.md")
+    old_root.rename(new_root)
+    args = ["admin", "set-vault-path", "mine", str(new_root)]
+    if json_output:
+        args.append("--json")
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    if json_output:
+        assert json.loads(result.output) == {
+            "name": "mine",
+            "previous_path": str(old_root.resolve()),
+            "path": str(new_root.resolve()),
+            "updated": True,
+        }
+    else:
+        assert (
+            result.output
+            == f"Updated vault mine: {old_root.resolve()} -> {new_root.resolve()}\n"
+        )
+    assert not old_root.exists()
+    assert (
+        ChrononRepository(vault="mine").read("notes.md")["content"] == "remember this"
+    )
+    assert ChrononRepository(vault="mine").history("notes.md") == history
+    unchanged = runner.invoke(app, args)
+    assert unchanged.exit_code == 0, unchanged.output
+    if json_output:
+        assert json.loads(unchanged.output)["updated"] is False
+    else:
+        assert "already points to" in unchanged.output
+
+
+def test_set_vault_path_is_only_an_admin_command_and_requires_path(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    init_repository(root, register_vault="mine")
+    before = vaults.registry_path().read_bytes()
+
+    assert runner.invoke(app, ["set-vault-path", "mine", str(root)]).exit_code == 2
+    assert runner.invoke(app, ["admin", "set-vault-path", "mine"]).exit_code == 2
+    assert vaults.registry_path().read_bytes() == before
+
+
+@pytest.mark.parametrize("command", ["add-vault", "init"])
+def test_cli_registration_cannot_change_an_existing_vault_path(
+    tmp_path: Path, command: str
+) -> None:
+    old_root, new_root = tmp_path / "old", tmp_path / "new"
+    init_repository(old_root, register_vault="mine")
+    init_repository(new_root)
+    before = vaults.registry_path().read_bytes()
+    args = (
+        ["add-vault", "mine", str(new_root), "--json"]
+        if command == "add-vault"
+        else ["init", str(new_root), "--register", "mine", "--json"]
+    )
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 4, result.output
+    assert json.loads(result.output)["error"] == "invalid_argument"
+    assert str(old_root) not in result.output
+    assert vaults.registry_path().read_bytes() == before
 
 
 @pytest.mark.skipif(
@@ -286,9 +469,7 @@ def test_cli_add_list_remove_vault(tmp_path: Path) -> None:
     assert json.loads(add.output)["name"] == "mine"
 
     listing = runner.invoke(app, ["list-vaults", "--json"])
-    assert json.loads(listing.output)["vaults"] == [
-        {"name": "mine", "path": str(root.resolve())}
-    ]
+    assert json.loads(listing.output)["vaults"] == [{"name": "mine"}]
 
     remove = runner.invoke(app, ["remove-vault", "mine", "--json"])
     assert remove.exit_code == 0, remove.output
@@ -296,6 +477,51 @@ def test_cli_add_list_remove_vault(tmp_path: Path) -> None:
         runner.invoke(app, ["list-vaults", "--json"]).output.strip()
         == json.dumps({"vaults": []}, ensure_ascii=False, indent=2).strip()
     )
+
+
+def test_vault_listing_exposes_only_sorted_names(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "private storage"
+    init_repository(root, register_vault="zeta")
+    vaults.add_vault("alpha", root)
+    monkeypatch.chdir(tmp_path)
+
+    expected = {"vaults": [{"name": "alpha"}, {"name": "zeta"}]}
+    assert list_vaults() == expected
+    plain = runner.invoke(app, ["list-vaults"])
+    assert plain.exit_code == 0, plain.output
+    assert plain.output == "alpha\nzeta\n"
+    structured = runner.invoke(app, ["list-vaults", "--json"])
+    assert structured.exit_code == 0, structured.output
+    assert json.loads(structured.output) == expected
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_admin_vault_path_reports_registered_path(
+    tmp_path: Path, monkeypatch, offline: bool
+) -> None:
+    root = tmp_path / "private storage"
+    init_repository(root, register_vault="mine")
+    if offline:
+        root.rename(tmp_path / "moved storage")
+    monkeypatch.chdir(tmp_path)
+
+    plain = runner.invoke(app, ["admin", "vault-path", "mine"])
+    assert plain.exit_code == 0, plain.output
+    assert plain.output == f"{root.resolve()}\n"
+    structured = runner.invoke(app, ["admin", "vault-path", "mine", "--json"])
+    assert structured.exit_code == 0, structured.output
+    assert json.loads(structured.output) == {
+        "name": "mine",
+        "path": str(root.resolve()),
+    }
+
+
+def test_admin_vault_path_requires_a_registered_name() -> None:
+    result = runner.invoke(app, ["admin", "vault-path", "missing", "--json"])
+    assert result.exit_code == 4
+    error = json.loads(result.output)
+    assert error["error"] == "invalid_argument"
+    assert error["name"] == "missing"
 
 
 def test_cli_init_accepts_a_directory_matching_a_vault_name(

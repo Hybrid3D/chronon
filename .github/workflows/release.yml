@@ -1,8 +1,8 @@
 name: Release
 
-# Tagging is the entire release trigger: `git tag v0.2.3 && git push release v0.2.3`
+# Tagging is the entire release trigger: `git tag v0.2.4 && git push release v0.2.4`
 # builds the distributions, attaches them to a GitHub Release (which is what
-# makes `pipx install git+...@v0.2.3` reproducible), and publishes to PyPI.
+# makes `pipx install git+...@v0.2.4` reproducible), and publishes to PyPI.
 on:
   push:
     tags: ["v*"]
