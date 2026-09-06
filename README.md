@@ -5,11 +5,11 @@ Markdown files. Each tracked file gets its own linear, immutable timeline,
 time-based lookup, and structural diffs for YAML and JSON. It works alongside
 Git but neither calls nor replaces it.
 
-Chronon can be used in three ways:
+Chronon can be used by both people and AI agents:
 
-- by a person through the `chronon` CLI;
-- by an AI agent through the same CLI, guided by a generated `CHRONON.md`; or
-- by an AI client through the local stdio MCP server, `chronon-mcp`.
+- People use the `chronon` CLI directly.
+- Agents follow a generated `CHRONON.md`, using the local stdio MCP server,
+  `chronon-mcp` (recommended), or the same CLI.
 
 > **Project status:** alpha. Manual commit mode is implemented. `--mode auto` is
 > reserved but intentionally returns `not_implemented`. Before relying on
@@ -189,74 +189,118 @@ and the vault registry are left in place.
 
 ## Quick start
 
-Initialize a directory and register a global name for it in one operation:
+Create a vault, then work with it yourself through the CLI or ask an agent to
+work with it through MCP or CLI. The shell examples below use Bash
+(macOS, Linux, or WSL).
+
+Initialize a vault with a name of your choice. The examples below use
+`knowledge`; replace the path and use your chosen vault name throughout:
 
 ```bash
-mkdir -p "$HOME/Documents/my-notes"
-chronon init "$HOME/Documents/my-notes" --register notes
+mkdir -p "$HOME/Documents/knowledge"
+chronon init "$HOME/Documents/knowledge" --register knowledge
 ```
 
-On PowerShell:
+The registered name lets both people and agents access this vault from any
+directory. Choose either workflow below.
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\Documents\my-notes"
-chronon init "$HOME\Documents\my-notes" --register notes
-```
+### Work manually via CLI
 
-Create a file using any editor, start tracking it, observe its revision token,
-and make the first commit:
+Run commands yourself to create a note, read it, and inspect its history:
 
 ```bash
-printf 'title: First note\nstatus: draft\n' > "$HOME/Documents/my-notes/note.yml"
-chronon --vault notes add note.yml
-chronon --vault notes status note.yml --json
-chronon --vault notes commit note.yml \
-  --message "add first note" \
-  --if-match '<working_revision from status>'
+chronon --vault knowledge write first-note.md \
+  --content 'The pilot launches in October.' -m "add first note"
+chronon --vault knowledge read first-note.md
+chronon --vault knowledge log first-note.md
 ```
 
-PowerShell equivalent for the file creation step:
+`write` with a message creates, tracks, and commits the new file in one step.
+For later edits, read with `--json` and pass the returned `working_revision`
+as `--if-match` to protect against concurrent changes. See
+[Everyday CLI workflow](#everyday-cli-workflow) for editing and recovery.
 
-```powershell
-@"
-title: First note
-status: draft
-"@ | Set-Content -Encoding utf8 "$HOME\Documents\my-notes\note.yml"
-```
+### Work with an agent via MCP or CLI
 
-The `working_revision` value is an opaque compare-and-swap token. Passing it to
-`--if-match` prevents a person or another agent from overwriting content that
-changed after it was read.
-
-## Working from a different directory
-
-Vault registration is designed for this case. The initialization target does
-not have to be the current directory:
+Before using either interface, run `agent-setup` in the workspace where you
+will start the agent. This workspace can be separate from the vault:
 
 ```bash
+mkdir -p "$HOME/work/client-app"
 cd "$HOME/work/client-app"
-
-# Initialize a separate directory and register it as "knowledge".
-chronon init "$HOME/Documents/team-knowledge" \
-  --register knowledge
-
-# Create vault-specific AI guidance in the current external workspace.
-chronon agent-setup --vault knowledge
-
-chronon list-vaults
-chronon --vault knowledge status
-chronon --vault knowledge ls -l
+chronon agent-setup --vault knowledge --link CLAUDE.md --link AGENTS.md
 ```
 
-The global `--vault`/`-v` option is accepted before or after the subcommand:
+This generates `CHRONON.md` and links it from both Claude Code's `CLAUDE.md`
+and Codex's `AGENTS.md`. The guide selects `knowledge`, tells the agent to use
+MCP when available and otherwise the CLI, and covers reading, editing,
+validation, and commits. Setup is required for both interfaces.
+
+To choose among registered vaults per request, omit `--vault` and name the
+target vault in each request:
 
 ```bash
-chronon --vault knowledge diff architecture.yml
-chronon log architecture.yml -v knowledge
+chronon agent-setup --link CLAUDE.md --link AGENTS.md
+```
+
+For **MCP (recommended)**, run the registration command for your client in this
+workspace. Replace the quoted path with your `chronon-mcp` executable path;
+see [MCP configuration](#using-chronon-with-an-ai-through-mcp) for how to find it.
+
+```bash
+# Claude Code
+claude mcp add --transport stdio chronon -- "/absolute/path/to/chronon-mcp"
+
+# Or Codex CLI
+codex mcp add chronon -- "/absolute/path/to/chronon-mcp"
+```
+
+For **CLI-only use**, skip MCP registration. The agent follows the same
+`CHRONON.md` guidance using the installed `chronon` CLI.
+
+Start a new `claude` or `codex` session from this workspace and describe the
+work naturally. For a new vault, try:
+
+```text
+Save these meeting notes in the knowledge vault as meeting-notes.md:
+The pilot launches in October. Mina owns testing; Jae owns documentation.
+```
+
+Then ask:
+
+```text
+Read the notes in the knowledge vault and summarize them in summary.md.
+```
+
+You do not need to name Chronon, MCP tools, or CLI commands in your requests;
+the workspace instructions tell the agent how to access and save the documents.
+See [Agent setup details](#using-chronon-with-an-ai-through-chrononmd) for
+other clients and refreshing the guide.
+
+## Selecting a vault
+
+Use `--vault NAME` (or `-v NAME`) before or after a CLI subcommand to select a
+registered vault from any directory:
+
+```bash
+chronon --vault knowledge status
+chronon log first-note.md -v knowledge
 ```
 
 Without a vault option, Chronon searches upward from the current directory for
 the nearest `.chronon/config.toml`, similar to Git repository discovery.
+
+To use one vault by default from an external workspace, pin it:
+
+```bash
+chronon set-vault knowledge
+chronon status
+chronon ls -l
+```
+
+The pin is stored in `.chronon-workspace` and applies to that directory and its
+descendants. `chronon unset-vault` removes it. An explicit `--vault` wins over
+discovery; being inside a vault takes precedence over a workspace pin.
 
 ### Vault registry location
 
@@ -449,6 +493,7 @@ Run `chronon COMMAND --help` for every option.
 | `validate FILE` | Validate current content |
 | `agent-setup [PATH]` | Create or refresh CHRONON.md and point the workspace's AI instruction files at it (`--permissions` to allowlist safe commands, `--check` to verify only) |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
+| `set-vault NAME [PATH]`, `unset-vault [PATH]` | Pin/unpin a workspace directory to a vault (writes/removes `.chronon-workspace`) |
 
 Use `chronon --version` (or `chronon -V`) to print the installed version. Add
 `--json` for machine-readable output. Domain errors also become JSON and
@@ -588,8 +633,9 @@ Allowlisted:
 
 Deliberately **not** allowlisted, so these still stop for approval: `discard`
 (destroys uncommitted work no history can restore), `accept` (adopts an edit
-Chronon flagged on purpose), and `init` / `add-vault` / `remove-vault` (reshape
-the repository or the per-user vault registry).
+Chronon flagged on purpose), and `init` / `add-vault` / `remove-vault` /
+`set-vault` / `unset-vault` (reshape the repository, the per-user vault
+registry, or which vault a workspace resolves to).
 
 When `--vault` is given, each command is allowlisted in both
 `chronon <command>` and `chronon --vault <name> <command>` form, because the
