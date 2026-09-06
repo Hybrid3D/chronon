@@ -94,13 +94,23 @@ def resolve_root(vault: str | None = None, start: str | Path | None = None) -> P
     `vault` is a name registered via `chronon add-vault` (see core/vaults.py). It
     is looked up in the global, per-user registry — not inside any repository —
     so it works from any current directory. Omitting it preserves the original
-    behavior: search upward from `start`/cwd for the nearest `.chronon/`.
+    behavior: search upward from `start`/cwd for the nearest `.chronon/`, falling
+    back to a `.chronon-workspace` pin (see `chronon set-vault`) above `start`
+    when no vault is found there directly.
     """
     if vault is not None:
         from .vaults import resolve_vault
 
         return resolve_vault(vault)
-    return discover_root(start)
+    try:
+        return discover_root(start)
+    except RepositoryNotFound:
+        from .vaults import read_workspace_vault, resolve_vault
+
+        pinned = read_workspace_vault(start)
+        if pinned is None:
+            raise
+        return resolve_vault(pinned)
 
 
 def _ensure_gitignore(root: Path) -> None:

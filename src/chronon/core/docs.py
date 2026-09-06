@@ -111,7 +111,10 @@ chronon --vault <vault> status
 
 When no named vault is specified and the active interface is running inside a
 vault, omit the MCP `vault` argument or CLI `--vault` option and let Chronon
-discover it from the working directory. Do not guess a vault name."""
+discover it from the working directory. This also works from a plain workspace
+directory that was pinned to one vault with `chronon set-vault <name>`
+(writes `.chronon-workspace`); check for that pin before asking the user which
+vault to use. Do not guess a vault name."""
         mcp_target_note = """In the calls below, replace `<selected-vault>` with the
 user-selected name. Omit the `vault` argument only when Chronon can discover the
 intended vault from the MCP server's working directory."""

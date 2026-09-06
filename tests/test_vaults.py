@@ -129,6 +129,127 @@ def test_concurrent_vault_additions_do_not_lose_entries(tmp_path: Path) -> None:
     assert set(vaults.list_vaults()) == {f"vault-{index}" for index in range(4)}
 
 
+# ── .chronon-workspace pin (core/vaults.py: set_vault/unset_vault) ─────────
+
+
+def test_set_vault_requires_a_registered_vault(tmp_path: Path) -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.set_vault("nope", tmp_path)
+
+
+def test_set_vault_writes_pin_and_read_workspace_vault_finds_it(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    added = vaults.set_vault("mine", workspace)
+    assert added == {
+        "path": str(workspace / vaults.WORKSPACE_FILE),
+        "vault": "mine",
+        "created": True,
+    }
+
+    # discovered from the pinned directory itself, and from a subdirectory
+    assert vaults.read_workspace_vault(workspace) == "mine"
+    nested = workspace / "sub" / "dir"
+    nested.mkdir(parents=True)
+    assert vaults.read_workspace_vault(nested) == "mine"
+
+    # re-pinning updates in place rather than erroring
+    again = vaults.set_vault("mine", workspace)
+    assert again["created"] is False
+
+
+def test_read_workspace_vault_returns_none_without_a_pin(tmp_path: Path) -> None:
+    assert vaults.read_workspace_vault(tmp_path) is None
+
+
+def test_unset_vault_removes_the_pin(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    vaults.set_vault("mine", workspace)
+
+    removed = vaults.unset_vault(workspace)
+    assert removed == {"path": str(workspace / vaults.WORKSPACE_FILE), "removed": True}
+    assert vaults.read_workspace_vault(workspace) is None
+
+
+def test_unset_vault_without_a_pin_raises(tmp_path: Path) -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.unset_vault(tmp_path)
+
+
+def test_repository_resolves_root_via_workspace_pin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A workspace pin lets ChrononRepository() with no --vault resolve, even
+    though the workspace directory itself is not a chronon repository."""
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    vaults.set_vault("mine", workspace)
+    monkeypatch.chdir(workspace)
+
+    repo = ChrononRepository()
+    assert repo.root == root.resolve()
+
+
+def test_an_actual_vault_directory_wins_over_a_workspace_pin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Being inside a real vault takes precedence over any pin above it."""
+    other = tmp_path / "other"
+    init_repository(other)
+    vaults.add_vault("other", other)
+
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.set_vault("other", tmp_path)  # pin at an ancestor of `root`
+    monkeypatch.chdir(root)
+
+    repo = ChrononRepository()
+    assert repo.root == root.resolve()
+
+
+# ── CLI: `chronon set-vault` / `unset-vault` ────────────────────────────────
+
+
+def test_cli_set_vault_then_bare_commands_resolve_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "proj"
+    assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
+    (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pin = runner.invoke(app, ["set-vault", "mine", str(workspace), "--json"])
+    assert pin.exit_code == 0, pin.output
+    assert json.loads(pin.output)["vault"] == "mine"
+
+    monkeypatch.chdir(workspace)
+    added = runner.invoke(app, ["add", "docs.yml"])
+    assert added.exit_code == 0, added.output
+    result = runner.invoke(app, ["status", "docs.yml", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["state"] == "untracked"
+
+    unpin = runner.invoke(app, ["unset-vault", "--json"])
+    assert unpin.exit_code == 0, unpin.output
+    assert runner.invoke(app, ["status", "docs.yml", "--json"]).exit_code != 0
+
+
 # ── ChrononRepository(vault=...) resolves without touching cwd ─────────────
 
 
