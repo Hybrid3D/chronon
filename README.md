@@ -1,6 +1,6 @@
 # Chronon
 
-Chronon is a local version history for individual UTF-8 documents. Each tracked
+Chronon is a local version history for individual text documents. Each tracked
 file gets its own linear, immutable timeline, time-based lookup, and structural
 diffs for YAML and JSON. It works alongside Git, but does not call or replace
 Git.
@@ -19,13 +19,20 @@ Chronon can be used in three ways:
 
 - Python 3.11 or newer
 - Windows 10/11, Linux, WSL2, or macOS
-- UTF-8 text files; YAML, JSON, Markdown, and plain text are the primary formats
+- Text files; YAML, JSON, Markdown, and plain text are the primary formats. UTF-8
+  is the default and assumed encoding; other encodings are read and stored
+  losslessly (byte-exact through the CLI, while MCP reads of non-UTF-8 content
+  are flagged `lossy`)
 
 ## Installation
 
-[`pipx`](https://pipx.pypa.io/latest/how-to/install-pipx.html) is recommended for
-an end-user CLI installation. It gives Chronon its own Python environment while
-putting all commands on `PATH`.
+Chronon is a Python CLI, so the supported installers are the ones that give a
+CLI its own isolated environment and put its commands on `PATH`:
+[`uv`](https://docs.astral.sh/uv/) or
+[`pipx`](https://pipx.pypa.io/latest/how-to/install-pipx.html). Both install
+commands into a per-user directory (`~/.local/bin` on macOS/Linux). Running
+`uv tool update-shell` or `pipx ensurepath` once adds that directory to `PATH`;
+open a new terminal afterwards.
 
 The package name is `chronon-vcs`; the installed commands are:
 
@@ -37,102 +44,103 @@ chronon-mcp
 `chronon` is the single human/CLI-agent entry point. `chronon-mcp` is optional
 and is only needed by clients that integrate through MCP instead of a shell.
 
-### macOS
+### From GitHub
 
-Install Python and pipx, then install from a checked-out copy of this repository:
+No clone is required. Install a released tag directly:
+
+```bash
+uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
+# or
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
+
+chronon --version
+```
+
+Pinning a tag is deliberate: it is the difference between a reproducible
+install and whatever `main` happens to contain. Omit `@v0.2.1` only if you
+intentionally want the development branch.
+
+To move to a newer tag, install again with the new tag and `--force`
+(`uv tool install --force …`) or `pipx install --force …`.
+
+Every tag also publishes a built wheel and sdist on the
+[releases page](https://github.com/Hybrid3D/chronon/releases), which can be
+installed offline:
+
+```bash
+pipx install ./chronon_vcs-0.2.1-py3-none-any.whl
+```
+
+### From PyPI
+
+Once `chronon-vcs` is published, this is the shortest path:
+
+```bash
+uv tool install chronon-vcs
+# or
+pipx install chronon-vcs
+```
+
+Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
+
+### Platform prerequisites
+
+Only the installer bootstrap differs per platform; the `uv tool install` or
+`pipx install` command above is the same everywhere.
+
+**macOS**
 
 ```bash
 brew install python pipx
 pipx ensurepath
-# Open a new terminal after ensurepath.
-
-# Clone this repository into a directory named chronon, then:
-cd chronon
-pipx install .
-chronon --version
 ```
 
-If Python 3.11+ is already installed, only pipx and the final three commands are
-needed.
-
-### Linux
-
-Ubuntu 23.04+/Debian 12+:
-
-```bash
-sudo apt update
-sudo apt install pipx
-pipx ensurepath
-# Open a new shell after ensurepath.
-
-# Clone this repository into a directory named chronon, then:
-cd chronon
-pipx install .
-chronon --version
-```
-
-Fedora:
-
-```bash
-sudo dnf install pipx
-pipx ensurepath
-# Clone this repository into a directory named chronon, then:
-cd chronon
-pipx install .
-chronon --version
-```
+**Linux** — Ubuntu 23.04+/Debian 12+ use `sudo apt install pipx`; Fedora uses
+`sudo dnf install pipx`. Then run `pipx ensurepath` and open a new shell.
 
 Do not install into an OS-managed Python with `sudo pip`. On distributions that
 enforce PEP 668, use the distribution's pipx package or the alternatives in the
 [official pipx instructions](https://pipx.pypa.io/latest/how-to/install-pipx.html).
 
-### WSL2
+**WSL2** — use the Linux instructions inside WSL, even if Python or pipx is
+also installed on Windows. Keep the Chronon installation and active vault on the
+same side of the Windows/WSL boundary. For the best filesystem behavior and
+performance, a path below the WSL home directory (for example `~/vaults/notes`)
+is preferable to `/mnt/c/...`.
 
-Use the Linux instructions inside WSL, even if Python or pipx is also installed
-on Windows. Keep the Chronon installation and active vault on the same side of
-the Windows/WSL boundary. For the best filesystem behavior and performance, a
-path below the WSL home directory (for example `~/vaults/notes`) is preferable
-to `/mnt/c/...`.
-
-```bash
-sudo apt update
-sudo apt install pipx
-pipx ensurepath
-# Clone this repository into a directory named chronon, then:
-cd chronon
-pipx install .
-chronon --version
-```
-
-### Windows (PowerShell)
-
-Install Python 3.11+ from [python.org](https://www.python.org/downloads/windows/)
-and enable the installer option that makes the Python launcher available. Then:
+**Windows (PowerShell)** — install Python 3.11+ from
+[python.org](https://www.python.org/downloads/windows/), enabling the installer
+option that makes the Python launcher available, then:
 
 ```powershell
 py -m pip install --user pipx
 py -m pipx ensurepath
-# Close and reopen PowerShell after ensurepath.
-
-# Clone this repository into a directory named chronon, then:
-Set-Location chronon
-pipx install .
+# Close and reopen PowerShell, then:
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.1"
 chronon --version
 ```
 
 If `pipx` is still not found after reopening PowerShell, follow the PATH step in
 the [official Windows pipx instructions](https://pipx.pypa.io/latest/how-to/install-pipx.html#windows).
 
-### PyPI installation after a release
+### From a local checkout
 
-Once `chronon-vcs` has been published to PyPI, installation becomes:
+For contributors, or to try an unreleased change:
 
 ```bash
-pipx install chronon-vcs
+git clone https://github.com/Hybrid3D/chronon
+cd chronon
+pipx install --force .     # or: pip install -e ".[dev]" for development
 ```
 
-This repository is not published by the setup in this branch. Creating a GitHub
-repository or publishing a package remains a separate, deliberate release step.
+### Uninstalling
+
+```bash
+uv tool uninstall chronon-vcs    # or: pipx uninstall chronon-vcs
+```
+
+Uninstalling removes the commands only. Vault contents, `.chronon/` history,
+and the vault registry are left in place.
 
 ## Quick start
 
@@ -188,18 +196,18 @@ chronon init "$HOME/Documents/team-knowledge" \
   --register knowledge
 
 # Create vault-specific AI guidance in the current external workspace.
-chronon agents-md --vault knowledge
+chronon agent-setup --vault knowledge
 
 chronon list-vaults
 chronon --vault knowledge status
 chronon --vault knowledge ls -l
 ```
 
-The global `--vault`/`-v` option goes before the subcommand:
+The global `--vault`/`-v` option is accepted before or after the subcommand:
 
 ```bash
 chronon --vault knowledge diff architecture.yml
-chronon -v knowledge log architecture.yml
+chronon log architecture.yml -v knowledge
 ```
 
 Without a vault option, Chronon searches upward from the current directory for
@@ -394,46 +402,76 @@ Run `chronon COMMAND --help` for every option.
 | `accept FILE` | Accept a foreign edit as the current dirty baseline |
 | `schema-register FILE` | Attach a JSON Schema |
 | `validate FILE` | Validate current content |
-| `agents-md [PATH]` | Create or refresh CHRONON.md in an external working directory |
+| `agent-setup [PATH]` | Create or refresh CHRONON.md and point the workspace's AI instruction files at it (`--permissions` to allowlist safe commands, `--check` to verify only) |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
 
 Use `chronon --version` (or `chronon -V`) to print the installed version. Add
 `--json` for machine-readable output. Domain errors also become JSON and
-include a stable `error` code. Common exit codes are: `3` for repository/file
-lookup, `4` for invalid arguments, `5` for nothing to commit, `6` for protected
-foreign changes, `7` for a missing/stale precondition, and `8` when no state
-exists at a requested revision.
+include a stable `error` code. Common exit codes are: `1` for a failed check,
+`3` for repository/file lookup, `4` for invalid arguments, `5` for nothing to
+commit, `6` for protected foreign changes, `7` for a missing/stale precondition,
+and `8` when no state exists at a requested revision.
 
 ## Using Chronon with an AI through `CHRONON.md`
 
-`chronon agents-md` writes `CHRONON.md` in the current directory. The current
-directory does not need to be a vault; normally it is the project or agent
-workspace from which a separate vault will be used:
+`chronon agent-setup` writes `CHRONON.md` in the current directory and links it
+from the AI instruction files that workspace already uses. The current directory
+does not need to be a vault; normally it is the project or agent workspace from
+which a separate vault will be used:
 
 ```bash
 cd "$HOME/work/client-app"
-chronon agents-md
+chronon agent-setup --vault knowledge
 ```
 
-Pass a directory to write `CHRONON.md` there instead:
+Pass a directory to set up that directory instead:
 
 ```bash
-chronon agents-md "$HOME/work/client-app"
+chronon agent-setup "$HOME/work/client-app" --vault knowledge
 ```
 
-Without a vault option, the generated file contains general guidance explaining
-how an agent should select a vault. To specialize it for one registered vault,
-pass `--vault` to the `agents-md` command:
+Both steps are idempotent, so this is also the upgrade command: re-run it after
+installing a new Chronon version to refresh the generated guidance in place. See
+[How your agent loads `CHRONON.md`](#how-your-agent-loads-chrononmd) for the
+linking rules.
+
+`agent-setup` deliberately generates one of two target-selection variants.
+
+### Generic `CHRONON.md` (no fixed vault)
+
+Without `--vault`, the guide tells the agent to use an explicitly named vault
+when the user supplies one, to rely on working-directory discovery when already
+inside a vault, and never to guess a vault name:
 
 ```bash
-chronon agents-md --vault knowledge
-chronon agents-md "$HOME/work/client-app" --vault knowledge
+chronon agent-setup
+chronon agent-setup "$HOME/work/client-app"
 ```
 
-The specialized template names `knowledge` as the fixed target, adds
-`chronon --vault knowledge` to every relevant command, and tells the agent to
-list, read, and write managed files only through Chronon. It therefore remains
-useful even though the generated file lives outside the vault.
+### Vault-specific `CHRONON.md`
+
+With `--vault`, the guide fixes one registered vault as the target:
+
+```bash
+chronon agent-setup --vault knowledge
+chronon agent-setup "$HOME/work/client-app" --vault knowledge
+```
+
+The specialized template names `knowledge` in every relevant example. MCP calls
+use `vault="knowledge"`; CLI commands use `chronon --vault knowledge`. The agent
+must not substitute a different target unless the user explicitly changes it.
+
+Both variants work with or without MCP. The generated instructions establish
+this interface order:
+
+1. If the client exposes Chronon MCP tools, use those tools for the entire task.
+2. Otherwise use the `chronon` CLI as a fallback.
+3. Do not mix MCP and CLI during one write flow.
+
+The MCP and CLI sections describe the same safety workflow. Read first, retain
+`working_revision`, and pass it as MCP `expected_revision` or CLI `--if-match`
+when mutating. An MCP result with an `error` field is treated as a failed
+operation. Managed resources are not edited through direct filesystem tools.
 
 The generated section also explains scratch safety, revision preconditions,
 commits, and structured edits. It is bounded by these markers:
@@ -443,7 +481,7 @@ commits, and structured edits. It is bounded by these markers:
 <!-- chronon:agents-md:end -->
 ```
 
-Re-running `agents-md` updates only that section and preserves everything else
+Re-running `agent-setup` updates only that section and preserves everything else
 in the file. You can prepend project-specific instructions, for example:
 
 ```markdown
@@ -454,9 +492,117 @@ in the file. You can prepend project-specific instructions, for example:
 - Use concise commit messages that describe the content change.
 ```
 
-Whether an AI reads `CHRONON.md` automatically depends on the client. Generate
-it in the agent's working directory, attach it, or name its absolute path in the
-prompt. A complete prompt can be:
+### How your agent loads `CHRONON.md`
+
+`CHRONON.md` is not a filename AI clients look for on their own, so `agent-setup`
+also writes a short pointer block into the instruction files they *do* load. One
+command produces a working setup:
+
+```console
+$ chronon agent-setup --vault knowledge
+Created /home/me/work/client-app/CHRONON.md
+Updated /home/me/work/client-app/CLAUDE.md -> CHRONON.md
+```
+
+Targets are chosen like this:
+
+- every known instruction file that already exists — `CLAUDE.md`, `AGENTS.md`,
+  `GEMINI.md`, `.github/copilot-instructions.md`;
+- otherwise `AGENTS.md`, the filename read by the widest set of clients.
+
+Override the choice with `--link` (repeatable), or skip the step entirely with
+`--no-link`:
+
+```bash
+chronon agent-setup --link CLAUDE.md --link .github/copilot-instructions.md
+chronon agent-setup --no-link
+```
+
+### Approving Chronon commands once
+
+By default an agent asks before every `chronon` invocation, which is noise
+rather than safety for commands that change nothing or leave an undoable
+revision. `--permissions` allowlists those in Claude Code's local settings:
+
+```bash
+chronon agent-setup --vault knowledge --permissions
+```
+
+This merges rules into `.claude/settings.local.json` — the personal, normally
+git-ignored file — leaving every other key, and any existing `deny` rule,
+exactly as it was. A rule that an existing `deny` covers is reported and never
+added.
+
+Allowlisted:
+
+- read-only: `read` `show` `status` `list` `ls` `log` `diff` `path-history`
+  `validate` `list-vaults`
+- recoverable writes: `add` `write` `commit` `set` `unset` `mv` `cp` `rollback`
+  `schema-register` — each leaves a commit that `log`/`diff` can inspect and
+  `rollback` can undo
+
+Deliberately **not** allowlisted, so these still stop for approval: `discard`
+(destroys uncommitted work no history can restore), `accept` (adopts an edit
+Chronon flagged on purpose), and `init` / `add-vault` / `remove-vault` (reshape
+the repository or the per-user vault registry).
+
+When `--vault` is given, each command is allowlisted in both
+`chronon <command>` and `chronon --vault <name> <command>` form, because the
+generated guidance puts the selector before the subcommand.
+
+The flag is opt-in: `agent-setup` without it never touches your settings.
+
+### Checking without writing
+
+`--check` writes nothing. It reports each file as `current`, `stale`, or
+`missing`, and exits `1` if a refresh would change anything. Add
+`--permissions` to include the allowlist in the check:
+
+```console
+$ chronon agent-setup --check --vault knowledge
+stale    /home/me/work/client-app/CHRONON.md
+current  /home/me/work/client-app/CLAUDE.md -> CHRONON.md
+chronon: agent instructions are out of date; run 'chronon agent-setup' to refresh them
+```
+
+This is the sweep to run after upgrading Chronon, since a workspace set up by an
+older version keeps generated text that no longer matches the CLI. It also
+catches a generated block that someone edited by hand, which makes it usable as
+a CI guard:
+
+```bash
+for workspace in ~/work/*/; do
+  chronon agent-setup --check "$workspace" >/dev/null || echo "needs refresh: $workspace"
+done
+```
+
+In `CLAUDE.md` the pointer uses Claude Code's `@CHRONON.md` import syntax, so
+the guide is loaded rather than merely mentioned. Other files get a Markdown
+link. Either way the block is bounded by its own markers:
+
+```html
+<!-- chronon:link:begin -->
+<!-- chronon:link:end -->
+```
+
+so re-running `agent-setup` refreshes the pointer and leaves the rest of your
+instructions untouched.
+
+**Do not copy the Chronon workflow into `CLAUDE.md` or `AGENTS.md` by hand.**
+That is the one setup that breaks silently: the generated `CHRONON.md` is
+refreshed on every upgrade, a hand-written copy is not, and the agent then reads
+commands that no longer exist. Keep project-specific content rules in your own
+instruction file and let `CHRONON.md` own the Chronon workflow.
+
+Codex reads `AGENTS.md` automatically, so the generated pointer is enough. It
+checks `AGENTS.override.md`, then `AGENTS.md`, then configured fallback names,
+and loads at most one file per directory — which is why linking from an existing
+`AGENTS.md` is safer than registering `CHRONON.md` as a fallback filename. See
+the [official Codex instruction discovery documentation](https://developers.openai.com/codex/guides/agents-md).
+
+For a client without persistent instruction-file discovery, attach
+`CHRONON.md`, name its absolute path, or mention it explicitly in the prompt. A
+complete prompt can be:
 
 ```text
 First read CHRONON.md and follow it. Inspect architecture.yml, update the web
@@ -465,14 +611,17 @@ message. If a decision is not material, use your recommended default and record
 the assumption in decisions.md.
 ```
 
-A well-behaved CLI agent should follow this sequence:
+A well-behaved agent should follow this sequence:
 
-1. Read `status --json` or `read --json` and retain `working_revision`.
-2. Make the smallest valid change.
-3. Pass the retained token as `--if-match` on mutation.
-4. Inspect `diff` and `validate`.
-5. Commit with a meaningful message; never leave important work only as scratch.
-6. On `revision_conflict`, re-read and reconcile instead of retrying blindly.
+1. Choose Chronon MCP when available; otherwise choose the CLI and stay with it.
+2. Select the user-named vault, or use working-directory discovery when no
+   vault name was supplied. Never guess.
+3. Read status or content and retain `working_revision`.
+4. Make the smallest valid change.
+5. Pass the retained token as MCP `expected_revision` or CLI `--if-match`.
+6. Inspect the diff and validate.
+7. Commit with a meaningful message; never leave important work only as scratch.
+8. On `revision_conflict`, re-read and reconcile instead of retrying blindly.
 
 ## Using Chronon with an AI through MCP
 

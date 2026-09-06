@@ -18,6 +18,7 @@ from .errors import (
     RepositoryNotFound,
     ResourceNotTracked,
 )
+from .text import encode_working_text, read_working_text
 
 
 def now_iso() -> str:
@@ -45,7 +46,7 @@ max_interval_seconds = 7200
 
 
 def content_hash(content: str | bytes) -> str:
-    data = content.encode("utf-8") if isinstance(content, str) else content
+    data = encode_working_text(content) if isinstance(content, str) else content
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
@@ -55,8 +56,8 @@ def atomic_write(path: Path, data: str) -> None:
     try:
         mode = (path.stat().st_mode & 0o777) if path.exists() else 0o644
         os.fchmod(fd, mode)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
-            stream.write(data)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encode_working_text(data))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -313,11 +314,9 @@ class Store:
         if not working.is_file():
             raise FileError("resource file does not exist", resource=relative)
         try:
-            content = working.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise FileError(
-                "resource must be a readable UTF-8 text file", resource=relative
-            ) from exc
+            content = read_working_text(working)
+        except OSError as exc:
+            raise FileError("resource file is not readable", resource=relative) from exc
         resource_dir = self.resource_dir(relative)
         created = not self.is_tracked(relative)
         resource_dir.mkdir(parents=True, exist_ok=True)

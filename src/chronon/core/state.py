@@ -7,6 +7,7 @@ from typing import Any
 from .errors import FileError
 from .snapshot import read_index
 from .store import Store, atomic_write_json, content_hash
+from .text import read_working_text
 
 
 def read_state_file(store: Store, resource: str) -> dict[str, Any] | None:
@@ -82,11 +83,9 @@ def resource_state(store: Store, resource: str) -> dict[str, Any]:
             "mtime": None,
         }
     try:
-        content = working.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise FileError(
-            "working copy is not readable UTF-8 text", resource=resource
-        ) from exc
+        content = read_working_text(working)
+    except OSError as exc:
+        raise FileError("working copy is not readable", resource=resource) from exc
     working_hash = content_hash(content)
     if not commits:
         state = "untracked"

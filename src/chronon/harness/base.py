@@ -46,6 +46,8 @@ def validate_content(
         return [Issue(location, str(getattr(exc, "problem", None) or exc))]
     except json.JSONDecodeError as exc:
         return [Issue(f"line {exc.lineno}, column {exc.colno}", exc.msg)]
+    except (UnicodeError, ValueError) as exc:
+        return [Issue("$", f"content is not valid UTF-8 text: {exc}")]
     if schema is None:
         return []
     validator = Draft202012Validator(schema)

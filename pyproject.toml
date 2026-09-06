@@ -32,6 +32,12 @@ dependencies = [
   "typer>=0.18,<1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Hybrid3D/chronon"
+Repository = "https://github.com/Hybrid3D/chronon"
+Issues = "https://github.com/Hybrid3D/chronon/issues"
+Changelog = "https://github.com/Hybrid3D/chronon/releases"
+
 [project.optional-dependencies]
 dev = [
   "build>=1.2",

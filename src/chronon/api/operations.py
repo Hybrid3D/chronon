@@ -4,7 +4,7 @@ import getpass
 import json
 import os
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +46,7 @@ from chronon.core.store import (
     new_resource_id,
     now_iso,
 )
+from chronon.core.text import has_lone_surrogates, read_working_text
 from chronon.harness.base import parse_content, validate_content
 
 MISSING = object()
@@ -91,14 +92,92 @@ def write_agent_instructions(
     directory: str | Path = ".",
     vault: str | None = None,
     filename: str = "CHRONON.md",
+    link: bool = True,
+    link_targets: Sequence[str] | None = None,
+    permissions: bool = False,
 ) -> dict[str, Any]:
-    """Write AI guidance outside a vault, optionally specialized for one vault."""
-    from chronon.core.docs import ensure_agents_md
+    """Write AI guidance outside a vault, optionally specialized for one vault.
+
+    Unless ``link`` is false, the guide is also referenced from the instruction
+    files the AI clients in this workspace load on their own, so no manual
+    wiring step is left for the user. ``link_targets`` overrides the detected
+    files with an explicit list. ``permissions`` additionally allowlists the
+    recoverable Chronon commands in Claude Code's local settings.
+    """
+    from chronon.core.docs import (
+        detect_link_targets,
+        ensure_agent_link,
+        ensure_agents_md,
+    )
     from chronon.core.vaults import resolve_vault
 
     if vault:
         resolve_vault(vault)
-    return ensure_agents_md(Path(directory), filename, vault=vault)
+    result = ensure_agents_md(Path(directory), filename, vault=vault)
+    if not link:
+        return result
+    targets = (
+        list(link_targets)
+        if link_targets is not None
+        else detect_link_targets(Path(directory), exclude=filename)
+    )
+    result["links"] = [
+        ensure_agent_link(Path(directory), target, filename, vault=vault)
+        for target in targets
+    ]
+    if permissions:
+        from chronon.core.permissions import ensure_permissions
+
+        result["permissions"] = ensure_permissions(Path(directory), vault=vault)
+    return result
+
+
+def check_agent_instructions(
+    directory: str | Path = ".",
+    vault: str | None = None,
+    filename: str = "CHRONON.md",
+    link: bool = True,
+    link_targets: Sequence[str] | None = None,
+    permissions: bool = False,
+) -> dict[str, Any]:
+    """Report whether the generated guidance and its pointers are up to date.
+
+    Writes nothing. ``current`` is false when re-running the generator would
+    change anything, which is the signal after a Chronon upgrade or when someone
+    has edited a generated block by hand.
+    """
+    from chronon.core.docs import (
+        check_agent_link,
+        check_agents_md,
+        detect_link_targets,
+    )
+    from chronon.core.vaults import resolve_vault
+
+    if vault:
+        resolve_vault(vault)
+    result = check_agents_md(Path(directory), filename, vault=vault)
+    result["checked"] = True
+    if link:
+        targets = (
+            list(link_targets)
+            if link_targets is not None
+            else detect_link_targets(Path(directory), exclude=filename)
+        )
+        result["links"] = [
+            check_agent_link(Path(directory), target, filename, vault=vault)
+            for target in targets
+        ]
+    if permissions:
+        from chronon.core.permissions import check_permissions
+
+        result["permissions"] = check_permissions(Path(directory), vault=vault)
+    dependents = [*result.get("links", [])]
+    if "permissions" in result:
+        dependents.append(result["permissions"])
+    result["current"] = result["current"] and all(
+        entry["current"] for entry in dependents
+    )
+    return result
 
 
 def _author(author: str | None) -> str:
@@ -161,13 +240,11 @@ class ChrononRepository:
     def _working_content(self, resource: str) -> str:
         path = self.store.working_path(resource)
         try:
-            return path.read_text(encoding="utf-8")
+            return read_working_text(path)
         except FileNotFoundError as exc:
             raise FileError("working copy does not exist", resource=resource) from exc
-        except (OSError, UnicodeDecodeError) as exc:
-            raise FileError(
-                "working copy must be readable UTF-8 text", resource=resource
-            ) from exc
+        except OSError as exc:
+            raise FileError("working copy is not readable", resource=resource) from exc
 
     def _validate(self, resource: str, content: str) -> None:
         issues = validate_content(content, resource, self._schema(resource))
@@ -480,10 +557,10 @@ class ChrononRepository:
             source_status = resource_state(self.store, origin)
 
             try:
-                content = origin_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
+                content = read_working_text(origin_file)
+            except OSError as exc:
                 raise FileError(
-                    "working copy is not readable UTF-8 text", resource=origin
+                    "working copy is not readable", resource=origin
                 ) from exc
 
             now = now_iso()
@@ -604,6 +681,9 @@ class ChrononRepository:
             "revision": _commit_ref(str(at), commit),
             "content": value,
         }
+        if isinstance(value, str):
+            result["encoding"] = "utf-8"
+            result["lossy"] = has_lone_surrogates(value)
         if commit is None:
             self._with_working_state(result, relative)
         return result

@@ -10,6 +10,7 @@ from typing import Any
 
 from .errors import FileError, NoStateAt, NothingToCommit
 from .store import Store, atomic_write, content_hash
+from .text import read_working_text
 
 
 def utc_now() -> datetime:
@@ -153,8 +154,8 @@ def read_snapshot(store: Store, resource: str, commit: Commit) -> str:
             seq=commit.seq,
         ) from exc
     try:
-        content = resolved_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        content = read_working_text(resolved_path)
+    except OSError as exc:
         raise FileError(
             "cannot read snapshot", resource=resource, seq=commit.seq
         ) from exc

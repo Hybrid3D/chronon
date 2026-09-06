@@ -12,22 +12,26 @@ from chronon.api.operations import list_vaults as _list_vaults
 from chronon.api.operations import remove_vault as _remove_vault
 from chronon.api.operations import write_agent_instructions as _write_agent_instructions
 from chronon.core.errors import ChrononError
+from chronon.core.text import json_safe
 
 mcp = FastMCP(
     "chronon",
     instructions=(
-        "Local, immutable per-file history. Use a vault name when the server's "
-        "working directory is outside the target repository. Before overwriting "
-        "scratch or foreign content, read it and pass its working_revision as "
-        "expected_revision. Tool errors are returned as structured objects with "
-        "an error field."
+        "Chronon MCP manages local vault resources with immutable per-file "
+        "history. Use these MCP tools, not direct filesystem writes or the "
+        "Chronon CLI, for managed resources. Use the exact user-selected vault "
+        "name when needed; never guess. Before mutation, read the resource or "
+        "status, retain working_revision, and pass it "
+        "as expected_revision. Prefer one-shot writes with a meaningful message. "
+        "On revision_conflict, re-read and reconcile; never retry blindly. Any "
+        "result with an error field is a failed operation."
     ),
 )
 
 
 def _safe(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     try:
-        return action()
+        return json_safe(action())
     except ChrononError as exc:
         return exc.as_dict()
 
@@ -353,9 +357,15 @@ def register_schema(
 def write_agent_instructions(
     directory: str = ".",
     vault: str | None = None,
+    link: bool = True,
 ) -> dict[str, Any]:
-    """Write CHRONON.md in an external directory, optionally for one vault."""
-    return _safe(lambda: _write_agent_instructions(directory, vault=vault))
+    """Write CHRONON.md in an external directory, optionally for one vault.
+
+    With `link` (default), the instruction files that AI clients load on their
+    own (CLAUDE.md, AGENTS.md, ...) also get a short pointer block, because they
+    will not discover CHRONON.md otherwise.
+    """
+    return _safe(lambda: _write_agent_instructions(directory, vault=vault, link=link))
 
 
 def main() -> None:

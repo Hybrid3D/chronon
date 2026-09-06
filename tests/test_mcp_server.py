@@ -24,6 +24,17 @@ def test_mcp_exposes_manual_versioning_tools() -> None:
     assert "lock_resource" not in names
 
 
+def test_mcp_server_instructions_match_safe_tool_first_workflow() -> None:
+    instructions = mcp.instructions or ""
+
+    assert "Use these MCP tools" in instructions
+    assert "not direct filesystem writes or the Chronon CLI" in instructions
+    assert "working_revision" in instructions
+    assert "expected_revision" in instructions
+    assert "revision_conflict" in instructions
+    assert "with an error field" in instructions
+
+
 def test_mcp_tool_calls_shared_operations(tmp_path: Path, monkeypatch) -> None:
     init_repository(tmp_path)
     (tmp_path / "docs.yml").write_text("value: 1\n", encoding="utf-8")

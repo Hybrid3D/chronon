@@ -249,7 +249,7 @@ def test_cli_main_accepts_global_vault_option(
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    monkeypatch.setattr("sys.argv", ["chronon", "--vault", "mine", "add", "docs.yml"])
+    monkeypatch.setattr("sys.argv", ["chronon", "add", "docs.yml", "--vault", "mine"])
 
     with pytest.raises(SystemExit) as excinfo:
         main()
@@ -257,7 +257,42 @@ def test_cli_main_accepts_global_vault_option(
     assert "docs.yml" in capsys.readouterr().out
 
 
-def test_cli_rejects_old_command_local_vault_option() -> None:
-    result = runner.invoke(app, ["status", "--vault", "mine"])
-    assert result.exit_code == 2
-    assert "No such option" in result.output
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["status", "--vault", "mine", "docs.yml", "--json"],
+        ["status", "docs.yml", "--vault", "mine", "--json"],
+        ["status", "docs.yml", "--vault=mine", "--json"],
+        ["status", "docs.yml", "-v", "mine", "--json"],
+        ["status", "docs.yml", "-vmine", "--json"],
+    ],
+)
+def test_cli_accepts_vault_option_after_subcommand(
+    tmp_path: Path, monkeypatch, arguments: list[str]
+) -> None:
+    root = tmp_path / "proj"
+    assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
+    (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+    assert runner.invoke(app, ["add", "docs.yml"]).exit_code == 0
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["state"] == "untracked"
+
+
+def test_cli_status_accepts_vault_after_command(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "proj"
+    assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(app, ["status", "--vault", "mine", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["resources"] == []

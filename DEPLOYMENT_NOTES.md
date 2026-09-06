@@ -12,8 +12,13 @@ silently guessed during preparation. It is not an end-user guide.
 - Keep MCP local over stdio. A network transport would require authentication,
   authorization, request limits, and a separate threat model.
 - Require Python 3.11+ and test every currently declared minor version in CI.
-- Use pipx as the primary user installation path; keep editable pip installs for
-  contributors.
+- Use isolated per-user CLI installers (`uv tool install` / `pipx install`) as
+  the primary user path, installed from a pinned Git tag until PyPI publication;
+  keep editable pip installs for contributors.
+- Make tagging the whole release trigger. `.github/workflows/release.yml` builds
+  the distributions, checks the tag against `__version__`, smoke-tests the wheel,
+  attaches the artifacts to the GitHub Release, and publishes to PyPI through
+  trusted publishing (no stored API token).
 - Use English for the primary public `README.md` so one set of Windows/Linux/WSL/
   macOS instructions serves the broadest GitHub audience. Add a linked
   `README.ko.md` later if Korean localization is wanted; avoid maintaining two
@@ -21,6 +26,9 @@ silently guessed during preparation. It is not an end-user guide.
 - Keep optimistic concurrency tokens (`working_revision`) in both CLI and MCP,
   and use native inter-process file locks underneath them.
 - Do not publish, create a remote, tag, or change version `0.2.1` in this worktree.
+- Assume the public repository is `Hybrid3D/chronon`. That name is currently
+  written into `pyproject.toml` and `README.md`; change both places together if
+  a different owner/name is chosen.
 
 ## Code review findings addressed
 
@@ -50,9 +58,10 @@ silently guessed during preparation. It is not an end-user guide.
 
 ## Decisions to make before the first public release
 
-1. **Repository URL and package ownership.** Add `[project.urls]` entries to
-   `pyproject.toml` and replace the README's “Code button” wording after the final
-   GitHub organization/repository and PyPI ownership are known.
+1. **Repository URL and package ownership.** `[project.urls]` now points at
+   `https://github.com/Hybrid3D/chronon`. Confirm that this is the final
+   GitHub organization/repository, and that PyPI ownership of `chronon-vcs`
+   matches, before the first tag is pushed.
 2. **Local-only versus portable history.** `.chronon/` is currently added to
    `.gitignore`. This is coherent for private local history, but users need a
    documented backup/sync story if history is expected to survive machines.
@@ -79,22 +88,27 @@ silently guessed during preparation. It is not an end-user guide.
    corruption, but multi-file operations (`mv`, snapshot + index + state) do not
    have a journal. Add recovery tests with injected failures before claiming
    database-like durability.
-8. **Binary and very large files.** Current behavior intentionally accepts only
-   readable UTF-8 text and stores full snapshots. Keep that limit prominent until
-   object deduplication, size limits, and streaming are designed.
+8. **Binary and very large files.** Chronon assumes UTF-8 text and stores full
+   snapshots. Non-UTF-8 bytes are tolerated and round-trip losslessly
+   (surrogateescape), but there is no binary-asset mode: no object
+   deduplication, size limits, streaming, or "binary files differ" diffs. Keep
+   that limit prominent until those are designed.
 9. **Security policy.** Before public release, add a real security contact and
    supported-version policy. Chronon stores plaintext snapshots and should never
    imply encryption or secret management.
 
 ## Release checklist
 
-- [ ] Choose GitHub owner/repository and add project URLs.
+- [ ] Confirm the GitHub owner/repository written into the project URLs.
 - [ ] Confirm the PyPI name `chronon-vcs` is available and owned by the publisher.
-- [ ] Set the intended release version once in `src/chronon/__init__.py`.
+- [ ] Register the PyPI trusted publisher for this repository and create the
+      `pypi` GitHub environment used by `.github/workflows/release.yml`.
+- [ ] Set the intended release version once in `src/chronon/__init__.py`, then
+      tag `v<version>`; the release workflow rejects a mismatch.
 - [ ] Run all GitHub Actions jobs, especially native Windows locking tests.
 - [ ] Run `python -m build` and `python -m twine check dist/*` from a clean clone.
 - [ ] Run `python -m pip_audit . --skip-editable` and review dependency licenses.
 - [ ] Install the wheel into a fresh environment and exercise CLI plus MCP tool listing.
 - [ ] Review wheel/sdist contents.
-- [ ] Add `SECURITY.md` with a real private contact route.
+- [x] Add `SECURITY.md` with a GitHub private vulnerability-reporting route.
 - [ ] Create signed/tagged release notes; do not publish from an unreviewed worktree.

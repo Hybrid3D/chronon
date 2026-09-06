@@ -8,20 +8,61 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from typer.core import TyperGroup
 
 from chronon import __version__
 from chronon.api.operations import (
     ChrononRepository,
     add_vault,
+    check_agent_instructions,
     init_repository,
     list_vaults,
     remove_vault,
     write_agent_instructions,
 )
 from chronon.core.errors import ChrononError, InvalidArgument
+from chronon.core.text import encode_working_text, json_safe, read_working_text
+
+
+def _normalize_vault_option(args: list[str]) -> list[str]:
+    """Move global vault selectors ahead of the subcommand for Click parsing."""
+    vault_args: list[str] = []
+    remaining: list[str] = []
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument == "--":
+            remaining.extend(args[index:])
+            break
+        if argument in {"--vault", "-v"}:
+            vault_args.append(argument)
+            if index + 1 < len(args):
+                vault_args.append(args[index + 1])
+                index += 2
+                continue
+        elif argument.startswith("--vault=") or (
+            argument.startswith("-v") and len(argument) > 2
+        ):
+            vault_args.append(argument)
+            index += 1
+            continue
+        else:
+            remaining.append(argument)
+        index += 1
+    return [*vault_args, *remaining]
+
+
+class ChrononGroup(TyperGroup):
+    """Typer group whose global vault option is accepted on either side."""
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        return super().parse_args(ctx, _normalize_vault_option(args))
+
 
 app = typer.Typer(
-    no_args_is_help=True, help="Document-oriented local history indexed by time."
+    cls=ChrononGroup,
+    no_args_is_help=True,
+    help="Document-oriented local history indexed by time.",
 )
 
 VAULT_HELP = (
@@ -64,13 +105,53 @@ def _active_vault() -> str | None:
     return _ACTIVE_VAULT.get()
 
 
-def _echo_agents_md_result(value: dict[str, Any]) -> None:
+def _agent_setup_verb(value: dict[str, Any]) -> str:
+    if value.get("created"):
+        return "Created"
+    return "Updated" if value.get("updated") else "Unchanged"
+
+
+def _echo_skipped_rules(value: dict[str, Any]) -> None:
+    for rule in value.get("skipped", []):
+        typer.echo(f"chronon: not allowlisted, an existing deny rule wins: {rule}")
+
+
+def _echo_agent_setup_check(value: dict[str, Any]) -> None:
+    entries = [value, *value.get("links", [])]
+    if "permissions" in value:
+        entries.append(value["permissions"])
+    for entry in entries:
+        suffix = f" -> {entry['references']}" if "references" in entry else ""
+        typer.echo(f"{entry['status']:<8} {entry['path']}{suffix}")
+    if "permissions" in value:
+        _echo_skipped_rules(value["permissions"])
+    if not value["current"]:
+        typer.echo(
+            "chronon: agent instructions are out of date; "
+            "run 'chronon agent-setup' to refresh them",
+            err=True,
+        )
+
+
+def _echo_agent_setup_result(value: dict[str, Any]) -> None:
     if value.get("created"):
         typer.echo(f"Created {value['path']}")
     elif value.get("updated"):
         typer.echo(f"Updated {value['path']}")
     else:
         typer.echo(f"{value['path']} is already up to date")
+    for link in value.get("links", []):
+        verb = _agent_setup_verb(link)
+        typer.echo(f"{verb} {link['path']} -> {link['references']}")
+    granted = value.get("permissions")
+    if granted:
+        if granted["updated"]:
+            count = len(granted["added"])
+            verb = _agent_setup_verb(granted)
+            typer.echo(f"{verb} {granted['path']} (+{count} chronon rules)")
+        else:
+            typer.echo(f"{granted['path']} already allows the chronon commands")
+        _echo_skipped_rules(granted)
 
 
 def _format_commit_time(value: str | None) -> str:
@@ -92,12 +173,31 @@ def _echo_path_change(value: dict[str, Any]) -> bool:
     return False
 
 
+def _echo_text(text: str, *, nl: bool) -> None:
+    """Print document/diff text, staying byte-exact for non-UTF-8 content.
+
+    ``read``/``show``/``diff`` can carry bytes that are not valid UTF-8 (kept as
+    surrogateescape code points). ``typer.echo`` would raise on those, so write
+    straight to the stdout buffer when it is available.
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        typer.echo(text, nl=nl)
+        return
+    buffer.write(encode_working_text(text))
+    if nl:
+        buffer.write(b"\n")
+    buffer.flush()
+
+
 def _emit(value: Any, json_output: bool = False) -> None:
     if json_output:
-        typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+        typer.echo(
+            json.dumps(json_safe(value), ensure_ascii=False, indent=2, default=str)
+        )
         return
     if isinstance(value, str):
-        typer.echo(value, nl=bool(value) and not value.endswith("\n"))
+        _echo_text(value, nl=bool(value) and not value.endswith("\n"))
         return
     if not isinstance(value, dict):
         typer.echo(value)
@@ -123,11 +223,11 @@ def _emit(value: Any, json_output: bool = False) -> None:
         if not value["changes"] and not renamed:
             typer.echo("No changes")
         if value.get("text"):
-            typer.echo(value["text"], nl=not value["text"].endswith("\n"))
+            _echo_text(value["text"], nl=not value["text"].endswith("\n"))
     elif "text" in value:
         renamed = _echo_path_change(value)
         if value["text"]:
-            typer.echo(value["text"], nl=not value["text"].endswith("\n"))
+            _echo_text(value["text"], nl=not value["text"].endswith("\n"))
         elif not renamed:
             typer.echo("No changes")
     elif "commits" in value:
@@ -144,8 +244,10 @@ def _emit(value: Any, json_output: bool = False) -> None:
             typer.echo(f"{entry['name']:<16} {entry['path']}")
         if not vaults:
             typer.echo("No registered vaults")
+    elif value.get("checked"):
+        _echo_agent_setup_check(value)
     elif "path" in value and "updated" in value:
-        _echo_agents_md_result(value)
+        _echo_agent_setup_result(value)
     elif "resources" in value:
         resources = value["resources"]
         for item in resources:
@@ -200,12 +302,24 @@ def _emit(value: Any, json_output: bool = False) -> None:
     elif "resource" in value:
         typer.echo(f"Updated {value['resource']}")
     else:
-        typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+        typer.echo(
+            json.dumps(json_safe(value), ensure_ascii=False, indent=2, default=str)
+        )
 
 
-def _run(action: Any, json_output: bool = False) -> None:
+def _run(
+    action: Any,
+    json_output: bool = False,
+    exit_code: Any = None,
+) -> None:
+    """Run `action`, print its result, and map domain failures to exit codes.
+
+    `exit_code` optionally derives a non-zero status from a *successful* result,
+    for read-only commands whose answer is itself pass/fail.
+    """
     try:
-        _emit(action(), json_output)
+        value = action()
+        _emit(value, json_output)
     except ChrononError as exc:
         if json_output:
             typer.echo(
@@ -242,6 +356,10 @@ def _run(action: Any, json_output: bool = False) -> None:
         else:
             typer.echo(f"chronon: {exc}", err=True)
         raise typer.Exit(3) from exc
+    if exit_code is not None:
+        status = exit_code(value)
+        if status:
+            raise typer.Exit(status)
 
 
 @app.command("init")
@@ -527,9 +645,15 @@ def write(
         if modes != 1:
             raise InvalidArgument("choose exactly one of --scratch or --message")
         if file is not None:
-            value = file.read_text(encoding="utf-8")
+            value = read_working_text(file)
         elif stdin:
-            value = sys.stdin.read()
+            buffer = getattr(sys.stdin, "buffer", None)
+            raw = buffer.read() if buffer is not None else sys.stdin.read()
+            value = (
+                raw.decode("utf-8", "surrogateescape")
+                if isinstance(raw, bytes)
+                else raw
+            )
         else:
             value = content or ""
         return ChrononRepository(vault=_active_vault()).put(
@@ -662,18 +786,42 @@ def schema_register(
     )
 
 
-@app.command("agents-md")
-def agents_md_command(
+@app.command("agent-setup")
+def agent_setup_command(
     directory: Path = typer.Argument(
         Path("."),
         metavar="[PATH]",
         help="Directory in which to create or refresh CHRONON.md.",
     ),
-    vault: str | None = typer.Option(
+    link: list[str] = typer.Option(
         None,
-        "--vault",
-        "-v",
-        help="Customize the guidance for this registered vault.",
+        "--link",
+        metavar="FILE",
+        help=(
+            "Instruction file that should point at CHRONON.md (repeatable). "
+            "Default: every known agent file present, else AGENTS.md."
+        ),
+    ),
+    no_link: bool = typer.Option(
+        False,
+        "--no-link",
+        help="Write CHRONON.md only; leave instruction files untouched.",
+    ),
+    permissions: bool = typer.Option(
+        False,
+        "--permissions",
+        help=(
+            "Also allowlist the recoverable chronon commands in "
+            ".claude/settings.local.json, so Claude Code stops asking for them."
+        ),
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help=(
+            "Write nothing; report whether CHRONON.md and its pointers are "
+            "current and exit 1 if anything would change."
+        ),
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -681,14 +829,45 @@ def agents_md_command(
 
     The destination defaults to the current directory and does not need to be
     inside a vault. With --vault, every example is specialized for that named
-    vault. Safe to re-run: only the marked Chronon section is updated.
+    vault.
+
+    CHRONON.md is not a filename AI clients load by themselves, so a short
+    pointer block is also written into the instruction files they do load
+    (CLAUDE.md, AGENTS.md, ...). Safe to re-run: only the marked Chronon blocks
+    are updated.
+
+    With --permissions, Claude Code's local settings also gain an allowlist for
+    the chronon commands whose effects are recoverable. With --check nothing is
+    written; the command reports whether a refresh is needed and exits 1 when
+    it is.
     """
 
-    selected_vault = vault or _active_vault()
+    def targets() -> list[str] | None:
+        if no_link and link:
+            raise InvalidArgument("--link cannot be combined with --no-link")
+        return list(link) if link else None
 
     def generate() -> dict[str, Any]:
-        return write_agent_instructions(directory, vault=selected_vault)
+        return write_agent_instructions(
+            directory,
+            vault=_active_vault(),
+            link=not no_link,
+            link_targets=targets(),
+            permissions=permissions,
+        )
 
+    def inspect() -> dict[str, Any]:
+        return check_agent_instructions(
+            directory,
+            vault=_active_vault(),
+            link=not no_link,
+            link_targets=targets(),
+            permissions=permissions,
+        )
+
+    if check:
+        _run(inspect, json_output, exit_code=lambda value: 0 if value["current"] else 1)
+        return
     _run(
         generate,
         json_output,
