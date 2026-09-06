@@ -1,5 +1,6 @@
 import json
 import multiprocessing
+import sys
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,9 @@ def test_invalid_vault_name_rejected(tmp_path: Path) -> None:
         vaults.add_vault("looks-valid\n", root)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="XDG config directories are POSIX-only"
+)
 def test_config_home_uses_xdg_directory(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("CHRONON_CONFIG_HOME")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
