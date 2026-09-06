@@ -1,0 +1,12 @@
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/.coverage
+/htmlcov/
+/dist/
+/build/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+/.claude/settings.local.json
+/PLAN.md
