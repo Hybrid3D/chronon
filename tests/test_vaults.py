@@ -1,8 +1,10 @@
 import json
 import multiprocessing
+import sys
 from pathlib import Path
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from chronon.api.operations import ChrononRepository, init_repository
@@ -75,6 +77,9 @@ def test_invalid_vault_name_rejected(tmp_path: Path) -> None:
         vaults.add_vault("looks-valid\n", root)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="XDG config directories are POSIX-only"
+)
 def test_config_home_uses_xdg_directory(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("CHRONON_CONFIG_HOME")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -230,8 +235,9 @@ def test_cli_explicit_vault_flag_works_from_unrelated_cwd(
 def test_cli_help_shows_vault_as_a_global_option() -> None:
     root_help = runner.invoke(app, ["--help"])
     assert root_help.exit_code == 0
-    assert "--vault" in root_help.output
-    assert "-v" in root_help.output
+    help_output = unstyle(root_help.output)
+    assert "--vault" in help_output
+    assert "-v" in help_output
 
     command_help = runner.invoke(app, ["diff", "--help"])
     assert command_help.exit_code == 0
