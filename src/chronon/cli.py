@@ -408,7 +408,9 @@ def remove_vault_command(
 
 @app.command("set-vault")
 def set_vault_command(
-    name: str = typer.Argument(..., help="Registered vault name (see 'chronon list-vaults')."),
+    name: str = typer.Argument(
+        ..., help="Registered vault name (see 'chronon list-vaults')."
+    ),
     directory: Path = typer.Argument(
         Path("."), help="Workspace directory to pin (default: current directory)."
     ),

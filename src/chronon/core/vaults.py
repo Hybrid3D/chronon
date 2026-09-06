@@ -195,7 +195,7 @@ def read_workspace_vault(start: str | Path | None = None) -> str | None:
         raise FileError(
             "workspace vault pin is invalid",
             path=str(path),
-            hint='expected a \'vault = "<name>"\' entry',
+            hint="expected a 'vault = \"<name>\"' entry",
         )
     return vault
 
