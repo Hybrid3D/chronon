@@ -63,7 +63,7 @@ FALLBACK_AGENT_FILE = "AGENTS.md"
 IMPORTING_AGENT_FILES = frozenset({"CLAUDE.md"})
 
 
-def _render_section(vault: str | None) -> str:
+def _render_section(vault: str | None, *, allow_scratch: bool = True) -> str:
     command = f"chronon --vault {vault}" if vault else "chronon"
     heading = f"Chronon vault `{vault}`" if vault else "Chronon"
     mcp_vault = f', vault="{vault}"' if vault else ', vault="<selected-vault>"'
@@ -129,6 +129,102 @@ vault to use. Do not guess a vault name."""
 user-selected name. Omit the `vault` argument only when Chronon can discover the
 intended vault from the MCP server's working directory."""
 
+    if allow_scratch:
+        commit_default_bullet = """- Default to committing whenever you change a tracked resource's content,
+  even if the user's request never said "commit" — an edit request implies a
+  finished, saved edit. Leave a resource as an uncommitted scratch/`dirty` edit
+  only when the user explicitly asked to stage or draft without saving it, or
+  the task is plainly unfinished. Never wait to be told to commit."""
+    else:
+        commit_default_bullet = """- Always finish a change with a commit; scratch (uncommitted) writes are not
+  part of this workflow. Never call `write_resource`/`chronon write` without a
+  commit message, and never leave a resource `dirty` on purpose — not even if
+  asked to "just draft" or "save without committing." If a task is genuinely
+  unfinished, say so instead of leaving an uncommitted edit."""
+
+    mcp_rows = [
+        f'| List managed files | `list_directory(directory="."{mcp_vault})` |',
+        f'| Read current content | `read_resource(resource="<path>"{mcp_vault})` |',
+        f'| Start tracking a file | `add_resource(resource="<path>"{mcp_vault})` |',
+        f'| Rename a tracked file | `move_resource(source="<old>", '
+        f'destination="<new>"{mcp_vault})` |',
+        f'| Copy to a new independent resource | `copy_resource(source="<src>", '
+        f'destination="<dst>"{mcp_vault})` |',
+    ]
+    if allow_scratch:
+        mcp_rows.append(
+            "| Save scratch content | "
+            f'`write_resource(resource="<path>", content="...", '
+            f'expected_revision="..."{mcp_vault})` |'
+        )
+    mcp_rows += [
+        "| Replace content + commit | "
+        f'`write_resource(resource="<path>", content="...", message="...", '
+        f'expected_revision="..."{mcp_vault})` |',
+        "| Change one structured value + commit | "
+        f'`set_value(resource="<path>", path="a.b.c", value="X", message="...", '
+        f'expected_revision="..."{mcp_vault})` |',
+        "| Commit existing scratch content | "
+        f'`commit_resource(resource="<path>", message="...", '
+        f'expected_revision="..."{mcp_vault})` |',
+        f'| Current state | `status_resource(resource="<path>"{mcp_vault})` |',
+        "| Diff revisions | "
+        f'`diff_resource(resource="<path>", from_ref="latest~3", '
+        f'to_ref="working"{mcp_vault})` |',
+        "| Read a past revision | "
+        f'`read_resource(resource="<path>", at="latest~1"{mcp_vault})` |',
+        "| History of one value | "
+        f'`path_history(resource="<path>", path="a.b.c"{mcp_vault})` |',
+        f'| Full commit log | `history_resource(resource="<path>"{mcp_vault})` |',
+        f'| Validate current content | `validate_resource(resource="<path>"{mcp_vault})` |',
+        "| Discard uncommitted edits | "
+        f'`discard_changes(resource="<path>", expected_revision="..."{mcp_vault})` |',
+        "| Restore an old revision + commit | "
+        f'`rollback_resource(resource="<path>", at="<rev>", message="...", '
+        f'expected_revision="..."{mcp_vault})` |',
+        "| Accept an external edit | after reading its revision, "
+        f'`accept_foreign(resource="<path>", expected_revision="..."{mcp_vault})`; '
+        "read again before the next write |",
+    ]
+    mcp_table = "\n".join(mcp_rows)
+
+    cli_rows = [
+        f"| List managed files | `{command} ls [directory]` |",
+        f"| Read current content | `{command} read <path>` |",
+        f"| Start tracking a file | `{command} add <path>` |",
+        f"| Rename a tracked file (keeps history) | `{command} mv <old> <new>` |",
+        f"| Copy a tracked file to a new path | `{command} cp <src> <dst>` |",
+    ]
+    if allow_scratch:
+        cli_rows.append(
+            "| Save scratch content without committing | "
+            f"`{command} write <path> --stdin --scratch --if-match <working_revision>` |"
+        )
+    cli_rows += [
+        "| Replace content + commit in one step | "
+        f'`{command} write <path> --stdin --message "..." --if-match <working_revision>` |',
+        "| Change one value + commit | "
+        f'`{command} set <path> --path "a.b.c" --value X --message "..." '
+        "--if-match <working_revision>` |",
+        "| Commit an existing scratch edit | "
+        f'`{command} commit <path> --message "..." --if-match <working_revision>` |',
+        f"| Current state | `{command} status <path>` "
+        "(untracked / clean / dirty / foreign / missing) |",
+        "| Diff against a point in time | "
+        f"`{command} diff <path> --from 2026-08-01 --to working` |",
+        f"| Diff against N commits ago | `{command} diff <path> --from latest~3` |",
+        f"| Read past content | `{command} show <path> <rev>` |",
+        f"| History of one value | `{command} path-history <path> --path a.b.c` |",
+        f"| Full commit log | `{command} log <path>` |",
+        f"| Discard uncommitted edits | `{command} discard <path>` |",
+        "| Restore an old revision (as a new commit) | "
+        f'`{command} rollback <path> <rev> --message "..."` |',
+        "| Accept an edit made outside Chronon | get `working_revision`, then "
+        f"`{command} accept <path> --if-match <working_revision>`; "
+        "read again before the next write |",
+    ]
+    cli_table = "\n".join(cli_rows)
+
     return f"""{BEGIN_MARKER}
 ## {heading} (per-file version history)
 
@@ -175,11 +271,7 @@ intended vault from the MCP server's working directory."""
 > - Chronon tool results and CLI `--json` output are for you to act on, then
 >   discard — like shell output, not like results to hand over.
 
-- Default to committing whenever you change a tracked resource's content,
-  even if the user's request never said "commit" — an edit request implies a
-  finished, saved edit. Leave a resource as an uncommitted scratch/`dirty` edit
-  only when the user explicitly asked to stage or draft without saving it, or
-  the task is plainly unfinished. Never wait to be told to commit.
+{commit_default_bullet}
 - A commit always needs a non-empty message (`message` with MCP, `--message`
   with the CLI). Nothing is saved to history automatically. A Chronon scratch
   edit is `dirty`; a normal editor or another program produces `foreign`. Both
@@ -214,47 +306,13 @@ MCP tools exposed by the client.
 
 | Task | MCP tool call |
 |---|---|
-| List managed files | `list_directory(directory="."{mcp_vault})` |
-| Read current content | `read_resource(resource="<path>"{mcp_vault})` |
-| Start tracking a file | `add_resource(resource="<path>"{mcp_vault})` |
-| Rename a tracked file | `move_resource(source="<old>", destination="<new>"{mcp_vault})` |
-| Copy to a new independent resource | `copy_resource(source="<src>", destination="<dst>"{mcp_vault})` |
-| Save scratch content | `write_resource(resource="<path>", content="...", expected_revision="..."{mcp_vault})` |
-| Replace content + commit | `write_resource(resource="<path>", content="...", message="...", expected_revision="..."{mcp_vault})` |
-| Change one structured value + commit | `set_value(resource="<path>", path="a.b.c", value="X", message="...", expected_revision="..."{mcp_vault})` |
-| Commit existing scratch content | `commit_resource(resource="<path>", message="...", expected_revision="..."{mcp_vault})` |
-| Current state | `status_resource(resource="<path>"{mcp_vault})` |
-| Diff revisions | `diff_resource(resource="<path>", from_ref="latest~3", to_ref="working"{mcp_vault})` |
-| Read a past revision | `read_resource(resource="<path>", at="latest~1"{mcp_vault})` |
-| History of one value | `path_history(resource="<path>", path="a.b.c"{mcp_vault})` |
-| Full commit log | `history_resource(resource="<path>"{mcp_vault})` |
-| Validate current content | `validate_resource(resource="<path>"{mcp_vault})` |
-| Discard uncommitted edits | `discard_changes(resource="<path>", expected_revision="..."{mcp_vault})` |
-| Restore an old revision + commit | `rollback_resource(resource="<path>", at="<rev>", message="...", expected_revision="..."{mcp_vault})` |
-| Accept an external edit | after reading its revision, `accept_foreign(resource="<path>", expected_revision="..."{mcp_vault})`; read again before the next write |
+{mcp_table}
 
 ### CLI fallback (when MCP tools are unavailable)
 
 | Task | Command |
 |---|---|
-| List managed files | `{command} ls [directory]` |
-| Read current content | `{command} read <path>` |
-| Start tracking a file | `{command} add <path>` |
-| Rename a tracked file (keeps history) | `{command} mv <old> <new>` |
-| Copy a tracked file to a new path | `{command} cp <src> <dst>` |
-| Save scratch content without committing | `{command} write <path> --stdin --scratch --if-match <working_revision>` |
-| Replace content + commit in one step | `{command} write <path> --stdin --message "..." --if-match <working_revision>` |
-| Change one value + commit | `{command} set <path> --path "a.b.c" --value X --message "..." --if-match <working_revision>` |
-| Commit an existing scratch edit | `{command} commit <path> --message "..." --if-match <working_revision>` |
-| Current state | `{command} status <path>` (untracked / clean / dirty / foreign / missing) |
-| Diff against a point in time | `{command} diff <path> --from 2026-08-01 --to working` |
-| Diff against N commits ago | `{command} diff <path> --from latest~3` |
-| Read past content | `{command} show <path> <rev>` |
-| History of one value | `{command} path-history <path> --path a.b.c` |
-| Full commit log | `{command} log <path>` |
-| Discard uncommitted edits | `{command} discard <path>` |
-| Restore an old revision (as a new commit) | `{command} rollback <path> <rev> --message "..."` |
-| Accept an edit made outside Chronon | get `working_revision`, then `{command} accept <path> --if-match <working_revision>`; read again before the next write |
+{cli_table}
 
 `<rev>` accepts an integer seq, `working`, `latest`, `latest~N`, an ISO date/timestamp,
 or a relative time like `"7d ago"`.
@@ -264,14 +322,20 @@ full command list.
 {END_MARKER}"""
 
 
-def render_section() -> str:
-    """Render generic guidance that explains how a vault is selected."""
-    return _render_section(None)
+def render_section(*, allow_scratch: bool = True) -> str:
+    """Render generic guidance that explains how a vault is selected.
+
+    ``allow_scratch`` controls whether the guidance documents uncommitted
+    scratch writes as an available action; existing state left `dirty` or
+    `foreign` by someone else is still explained either way, since that can
+    happen regardless of what this agent itself is allowed to do.
+    """
+    return _render_section(None, allow_scratch=allow_scratch)
 
 
-def render_vault_section(vault: str) -> str:
+def render_vault_section(vault: str, *, allow_scratch: bool = True) -> str:
     """Render guidance specialized for one registered vault name."""
-    return _render_section(vault)
+    return _render_section(vault, allow_scratch=allow_scratch)
 
 
 def _plan_block(path: Path, begin: str, end: str, block: str) -> str | None:

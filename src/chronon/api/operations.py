@@ -213,6 +213,29 @@ def check_agent_instructions(
     return result
 
 
+def get_agent_instructions(
+    vault: str | None = None,
+    *,
+    allow_scratch: bool = False,
+) -> str:
+    """Return the Chronon usage guide for AI agents as plain text.
+
+    Unlike `write_agent_instructions`, this writes nothing: the text is meant
+    to be returned directly by a CLI command or an MCP tool call and pasted
+    into the caller's own instructions on the spot. `allow_scratch` controls
+    whether the guidance documents uncommitted scratch writes as an available
+    action for this agent; it defaults to off, since a one-shot commit is the
+    safer default for an agent that fetches its own instructions on demand.
+    """
+    from chronon.core.docs import render_section, render_vault_section
+    from chronon.core.vaults import resolve_vault
+
+    if vault:
+        resolve_vault(vault)
+        return render_vault_section(vault, allow_scratch=allow_scratch)
+    return render_section(allow_scratch=allow_scratch)
+
+
 def _author(author: str | None) -> str:
     return author or os.environ.get("CHRONON_AUTHOR") or getpass.getuser() or "unknown"
 
