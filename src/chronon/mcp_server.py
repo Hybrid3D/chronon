@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 from chronon.api.operations import ChrononRepository
 from chronon.api.operations import add_vault as _add_vault
+from chronon.api.operations import get_agent_instructions as _get_agent_instructions
 from chronon.api.operations import init_repository as _init_repository
 from chronon.api.operations import list_vaults as _list_vaults
 from chronon.api.operations import remove_vault as _remove_vault
@@ -26,7 +27,10 @@ mcp = FastMCP(
         "status, retain working_revision, and pass it "
         "as expected_revision. Prefer one-shot writes with a meaningful message. "
         "On revision_conflict, re-read and reconcile; never retry blindly. Any "
-        "result with an error field is a failed operation."
+        "result with an error field is a failed operation. Call "
+        "get_agent_instructions for the full text usage guide (optionally "
+        "scoped to one vault with the vault argument) before starting a task "
+        "in an unfamiliar vault."
     ),
 )
 
@@ -368,6 +372,27 @@ def write_agent_instructions(
     will not discover CHRONON.md otherwise.
     """
     return _safe(lambda: _write_agent_instructions(directory, vault=vault, link=link))
+
+
+@mcp.tool()
+def get_agent_instructions(
+    vault: str | None = None,
+    allow_scratch: bool = False,
+) -> dict[str, Any]:
+    """Return the Chronon usage guide for AI agents as text, writing nothing.
+
+    The result's `instructions` field is plain text meant to be pasted directly
+    into this agent's own instructions or system prompt. `allow_scratch`
+    documents uncommitted scratch writes as an available action when set; it
+    defaults to off, so the guidance always finishes a change with a commit.
+    """
+    return _safe(
+        lambda: {
+            "instructions": _get_agent_instructions(
+                vault=vault, allow_scratch=allow_scratch
+            )
+        }
+    )
 
 
 def main() -> None:

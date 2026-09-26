@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from chronon.api.operations import (
     check_agent_instructions,
+    get_agent_instructions,
     init_repository,
     write_agent_instructions,
 )
@@ -19,6 +20,7 @@ from chronon.core.docs import (
     detect_link_targets,
     ensure_agent_link,
     ensure_agents_md,
+    render_section,
     render_vault_section,
 )
 from chronon.core.errors import InvalidArgument
@@ -542,3 +544,110 @@ def test_cli_agents_md_check_json(tmp_path: Path, monkeypatch) -> None:
     assert payload["current"] is True
     assert payload["checked"] is True
     assert payload["links"][0]["references"] == "CHRONON.md"
+
+
+# ── text-output guidance (chronon agent-instructions / get_agent_instructions) ──
+
+
+def test_render_section_still_documents_scratch_by_default() -> None:
+    """`agent-setup`'s CHRONON.md keeps its existing default; only the
+    text-output command (`get_agent_instructions`) defaults the toggle off."""
+    guide = render_section()
+
+    assert "Save scratch content" in guide
+    assert "--stdin --scratch" in guide
+    assert "Default to committing whenever you change" in guide
+
+
+def test_render_section_allow_scratch_false_removes_the_scratch_actions() -> None:
+    guide = render_section(allow_scratch=False)
+
+    assert "Save scratch content" not in guide
+    assert "--stdin --scratch" not in guide
+    assert "Always finish a change with a commit" in guide
+    # Existing dirty/foreign state left by someone else is still explained.
+    assert "Commit existing scratch content" in guide
+    assert "chronon commit <path>" in guide
+
+
+def test_render_vault_section_honors_allow_scratch_too() -> None:
+    with_scratch = render_vault_section("knowledge")
+    without = render_vault_section("knowledge", allow_scratch=False)
+
+    assert "Save scratch content" in with_scratch
+    assert "Save scratch content" not in without
+    # The vault-specific content itself is unaffected by the toggle.
+    assert 'vault="knowledge"' in without
+    assert 'vault="knowledge"' in with_scratch
+
+
+def test_get_agent_instructions_returns_generic_text_without_a_vault() -> None:
+    text = get_agent_instructions()
+
+    assert text.startswith(BEGIN_MARKER)
+    assert "Save scratch content" not in text
+    assert "<selected-vault>" in text
+
+
+def test_get_agent_instructions_specializes_and_validates_a_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    init_repository(tmp_path / "vault", register_vault="knowledge")
+
+    text = get_agent_instructions(vault="knowledge")
+
+    assert 'vault="knowledge"' in text
+    assert "<selected-vault>" not in text
+
+    with pytest.raises(InvalidArgument):
+        get_agent_instructions(vault="missing")
+
+
+def test_get_agent_instructions_writes_nothing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    get_agent_instructions()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_agent_instructions_defaults_to_no_scratch(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["agent-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert "Save scratch content" not in result.output
+    assert "Chronon" in result.output
+    assert list(tmp_path.iterdir()) == []  # writes nothing
+
+
+def test_cli_agent_instructions_allow_scratch_flag(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["agent-instructions", "--allow-scratch"])
+
+    assert result.exit_code == 0, result.output
+    assert "Save scratch content" in result.output
+
+
+def test_cli_agent_instructions_json(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["agent-instructions", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["allow_scratch"] is False
+    assert "Chronon" in payload["instructions"]
+
+
+def test_cli_agent_instructions_respects_vault_option(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    init_repository(tmp_path / "vault", register_vault="knowledge")
+
+    result = runner.invoke(app, ["--vault", "knowledge", "agent-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert 'vault="knowledge"' in result.output

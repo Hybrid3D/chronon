@@ -95,15 +95,15 @@ Upgrade with `uv tool upgrade chronon-vcs` or `pipx upgrade chronon-vcs`.
 No clone is required. Install a released tag directly:
 
 ```bash
-uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
+uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.5"
 # or
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.5"
 
 chronon --version
 ```
 
 Pinning a tag is deliberate: it is the difference between a reproducible
-install and whatever `main` happens to contain. Omit `@v0.2.4` only if you
+install and whatever `main` happens to contain. Omit `@v0.2.5` only if you
 intentionally want the development branch.
 
 To move to a newer tag, install again with the new tag and `--force`
@@ -114,7 +114,7 @@ Every tag also publishes a built wheel and sdist on the
 installed offline:
 
 ```bash
-pipx install ./chronon_vcs-0.2.4-py3-none-any.whl
+pipx install ./chronon_vcs-0.2.5-py3-none-any.whl
 ```
 
 ### Platform prerequisites
@@ -150,7 +150,7 @@ option that makes the Python launcher available, then:
 py -m pip install --user pipx
 py -m pipx ensurepath
 # Close and reopen PowerShell, then:
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.4"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.5"
 chronon --version
 ```
 
@@ -530,6 +530,7 @@ Run `chronon COMMAND --help` for every option.
 | `schema-register FILE` | Attach a JSON Schema |
 | `validate FILE` | Validate current content |
 | `agent-setup [PATH]` | Create or refresh CHRONON.md and point the workspace's AI instruction files at it (`--permissions` to allowlist safe commands, `--check` to verify only) |
+| `agent-instructions` | Print the same guidance as text, writing nothing (`--allow-scratch` to include uncommitted scratch writes) |
 | `add-vault`, `list-vaults`, `remove-vault` | Manage global vault names |
 | `admin vault-path NAME` | Show the registered storage path for human administration |
 | `admin set-vault-path NAME PATH` | Change an existing vault's registered storage path without moving files |
@@ -566,6 +567,30 @@ installing a new Chronon version to refresh the generated guidance in place. See
 linking rules.
 
 `agent-setup` deliberately generates one of two target-selection variants.
+
+### Getting the guidance as text instead of a file
+
+`chronon agent-instructions` renders the same guidance and prints it to stdout
+instead of writing `CHRONON.md`. Use it when an agent wants to fetch its own
+Chronon instructions on demand — to paste into its live instructions, pipe into
+another file, or fold into a system prompt — without leaving a file behind:
+
+```bash
+chronon agent-instructions --vault knowledge
+```
+
+By default the guidance leaves scratch (uncommitted) writes out of the workflow
+entirely: an agent that fetches its own instructions this way always finishes a
+change with a commit. Pass `--allow-scratch` to document scratch writes as an
+available action instead:
+
+```bash
+chronon agent-instructions --vault knowledge --allow-scratch
+```
+
+The MCP equivalent is the `get_agent_instructions` tool, which takes the same
+`vault` and `allow_scratch` arguments and returns the guidance in its
+`instructions` field — plain text, ready to paste, not a file path.
 
 ### Generic `CHRONON.md` (no fixed vault)
 
@@ -792,7 +817,7 @@ directory.
 The MCP surface supports the full working flow:
 
 - setup: `initialize_repository`, `list_vaults`, `add_vault`, `remove_vault`,
-  `write_agent_instructions`;
+  `write_agent_instructions`, `get_agent_instructions`;
 - discovery/read: `list_resources`, `list_directory`, `status_resource`,
   `read_resource`, `diff_resource`, `history_resource`, `path_history`;
 - write: `put_resource`, `add_resource`, `write_resource`, `set_value`,

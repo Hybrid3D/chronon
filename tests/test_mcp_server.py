@@ -24,6 +24,7 @@ def test_mcp_exposes_manual_versioning_tools() -> None:
         "list_directory",
         "register_schema",
         "write_agent_instructions",
+        "get_agent_instructions",
     } <= names
     assert "lock_resource" not in names
     assert not any("admin" in name or "vault_path" in name for name in names)
@@ -39,6 +40,9 @@ def test_mcp_server_instructions_match_safe_tool_first_workflow() -> None:
     assert "expected_revision" in instructions
     assert "revision_conflict" in instructions
     assert "with an error field" in instructions
+    # The tool that returns the full text guide must be self-announcing: an
+    # MCP client sees this string on connect, before it ever calls a tool.
+    assert "get_agent_instructions" in instructions
 
 
 def test_mcp_lists_vault_names_without_paths(tmp_path: Path, monkeypatch) -> None:
@@ -145,4 +149,49 @@ def test_mcp_agent_instructions_error_is_structured(
     _, result = asyncio.run(
         mcp.call_tool("write_agent_instructions", {"directory": "missing-directory"})
     )
+    assert result["error"] == "invalid_argument"
+
+
+def test_mcp_get_agent_instructions_returns_plain_text_guidance() -> None:
+    _, result = asyncio.run(mcp.call_tool("get_agent_instructions", {}))
+
+    assert "Chronon" in result["instructions"]
+    assert "read_resource" in result["instructions"]
+    assert "chronon read <path>" in result["instructions"]
+    # Scratch writes are left out of the default guidance.
+    assert "Save scratch content" not in result["instructions"]
+    assert "chronon --stdin --scratch" not in result["instructions"]
+
+
+def test_mcp_get_agent_instructions_can_include_scratch() -> None:
+    _, result = asyncio.run(
+        mcp.call_tool("get_agent_instructions", {"allow_scratch": True})
+    )
+
+    assert "Save scratch content" in result["instructions"]
+    assert "--stdin --scratch" in result["instructions"]
+
+
+def test_mcp_get_agent_instructions_specializes_for_a_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+    init_repository(tmp_path / "vault", register_vault="knowledge")
+
+    _, result = asyncio.run(
+        mcp.call_tool("get_agent_instructions", {"vault": "knowledge"})
+    )
+
+    assert 'vault="knowledge"' in result["instructions"]
+
+
+def test_mcp_get_agent_instructions_rejects_an_unknown_vault(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CHRONON_CONFIG_HOME", str(tmp_path / "config"))
+
+    _, result = asyncio.run(
+        mcp.call_tool("get_agent_instructions", {"vault": "missing"})
+    )
+
     assert result["error"] == "invalid_argument"

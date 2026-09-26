@@ -17,6 +17,7 @@ from chronon.api.operations import (
     admin_set_vault_path,
     admin_vault_path,
     check_agent_instructions,
+    get_agent_instructions,
     init_repository,
     list_vaults,
     remove_vault,
@@ -949,6 +950,38 @@ def agent_setup_command(
         generate,
         json_output,
     )
+
+
+@app.command("agent-instructions")
+def agent_instructions_command(
+    allow_scratch: bool = typer.Option(
+        False,
+        "--allow-scratch",
+        help=(
+            "Include uncommitted scratch writes as an action this agent may "
+            "take. Omitted by default, so the returned guidance always finishes "
+            "a change with a commit."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Print the Chronon usage guide for AI agents as text, writing nothing.
+
+    Unlike `agent-setup`, this does not touch the filesystem: the guide is
+    printed to stdout so it can be piped into another instruction file or
+    pasted directly into an agent's own instructions. With --vault, every
+    example is specialized for that named vault.
+    """
+
+    def action() -> Any:
+        text = get_agent_instructions(
+            vault=_active_vault(), allow_scratch=allow_scratch
+        )
+        if json_output:
+            return {"instructions": text, "allow_scratch": allow_scratch}
+        return text
+
+    _run(action, json_output)
 
 
 def main() -> None:
