@@ -808,7 +808,12 @@ def test_cli_chronon_uri_conflicting_with_vault_flag_errors(
 ) -> None:
     root = tmp_path / "proj"
     assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
-    assert runner.invoke(app, ["init", str(tmp_path / "other"), "--register", "other"]).exit_code == 0
+    assert (
+        runner.invoke(
+            app, ["init", str(tmp_path / "other"), "--register", "other"]
+        ).exit_code
+        == 0
+    )
 
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
