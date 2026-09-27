@@ -20,9 +20,9 @@ once and open a new terminal.
 Pin a released tag for a reproducible install:
 
 ```bash
-uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.5"
+uv tool install "git+https://github.com/Hybrid3D/chronon@v0.2.7"
 # or
-pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.5"
+pipx install "git+https://github.com/Hybrid3D/chronon@v0.2.7"
 ```
 
 Reinstall with a newer tag and `--force` to upgrade. Each
@@ -30,7 +30,7 @@ Reinstall with a newer tag and `--force` to upgrade. Each
 offline installs:
 
 ```bash
-pipx install ./chronon_vcs-0.2.5-py3-none-any.whl
+pipx install ./chronon_vcs-0.2.7-py3-none-any.whl
 ```
 
 ## Platform notes

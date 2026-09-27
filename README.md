@@ -70,6 +70,17 @@ The pilot launches in October. Mina owns testing; Jae owns documentation.
 Skip the MCP step and the agent falls back to the CLI. Re-run `agent-setup`
 after upgrading Chronon to refresh the guidance.
 
+No filesystem, or an agent that will not read `CHRONON.md` on its own? Print
+the same guidance as text and paste it into the agent's instructions or system
+prompt yourself:
+
+```bash
+chronon agent-instructions --vault knowledge
+```
+
+See [Agents and MCP](https://github.com/Hybrid3D/chronon/blob/main/docs/agents.md)
+for `--allow-scratch` and the MCP equivalent, `get_agent_instructions`.
+
 ## How it works
 
 - **One file, one history.** Commits are per file, need a message, and are never
