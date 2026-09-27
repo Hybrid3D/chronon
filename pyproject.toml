@@ -25,7 +25,7 @@ classifiers = [
   "Topic :: Software Development :: Version Control",
 ]
 dependencies = [
-  "filelock>=3.16,<4",
+  "filelock>=3.16,<5",
   "jsonschema>=4.23,<5",
   "mcp>=1.14,<2",
   "PyYAML>=6.0.2,<7",
