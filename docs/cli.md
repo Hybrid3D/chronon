@@ -9,10 +9,15 @@ machine-readable output.
 chronon --vault knowledge status     # -v works too, before or after the subcommand
 chronon set-vault knowledge          # pin this directory (writes .chronon-workspace)
 chronon unset-vault
+chronon read chronon://knowledge/notes.yml   # vault named inline in the resource
 ```
 
 Without `--vault` or a pin, Chronon searches upward for `.chronon/config.toml`,
-like Git. Precedence: `--vault` > being inside a vault > workspace pin.
+like Git, then falls back to a workspace pin. A `chronon://<vault>/<path>`
+resource argument names its vault the same way `--vault` does — it works from
+anywhere, even a directory with no cwd vault and no pin, and either one given
+alongside a conflicting `--vault` (or another `chronon://` argument in the same
+command) is rejected rather than silently resolved.
 
 ## Editing safely
 

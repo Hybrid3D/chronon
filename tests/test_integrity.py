@@ -57,8 +57,10 @@ def test_unsupported_repository_format_is_rejected(tmp_path: Path) -> None:
     config = tmp_path / ".chronon" / "config.toml"
     config.write_text('format_version = 999\nmode = "manual"\n', encoding="utf-8")
 
+    # Construction is lazy (a chronon:// resource URI may still supply a valid
+    # vault before anything is resolved), so the failure surfaces on first use.
     with pytest.raises(RepositoryNotFound, match="unsupported.*format"):
-        ChrononRepository(tmp_path)
+        ChrononRepository(tmp_path).store
 
 
 def test_externally_corrupted_schema_is_rejected(tmp_path: Path) -> None:

@@ -96,6 +96,11 @@ For example:
 Do not substitute another vault unless the user explicitly changes the target."""
         mcp_target_note = f"""Every repository call below includes `vault="{vault}"`.
 Keep that argument even when the MCP server happens to start inside a vault."""
+        uri_note = f"""A resource argument may also be written as
+`chronon://{vault}/<path>` instead of a bare path — matching this workspace's
+fixed vault, so it resolves the same way. A `chronon://` URI naming a
+*different* vault is rejected; this workspace stays fixed to `{vault}` unless
+the user explicitly changes the target."""
     else:
         context = """This workspace may use documents managed by **chronon**: a local,
 per-document, time-indexed history independent of git. When the user identifies
@@ -128,6 +133,15 @@ vault to use. Do not guess a vault name."""
         mcp_target_note = """In the calls below, replace `<selected-vault>` with the
 user-selected name. Omit the `vault` argument only when Chronon can discover the
 intended vault from the MCP server's working directory."""
+        uri_note = """A resource argument may also carry its own vault inline:
+`chronon://<vault>/<path>` (for example, `chronon://notes/apartment.md`) names
+resource `apartment.md` in vault `notes` directly — as an MCP tool's `resource`
+argument or a CLI positional argument — with no separate `vault=`/`--vault`
+needed. Use this when a document, a chat message, or another agent's
+instructions point at one managed file by this notation. It works even when no
+vault would otherwise be discoverable (no `--vault`, no cwd vault, no
+workspace pin): the URI alone is enough. An explicitly given vault that
+conflicts with the URI's vault is rejected rather than silently resolved."""
 
     if allow_scratch:
         commit_default_bullet = """- Default to committing whenever you change a tracked resource's content,
@@ -296,6 +310,10 @@ With the CLI, prefer `--json` when you need structured state or a
 `working_revision` token.
 
 {selection}
+
+### Referencing a resource with a `chronon://` URI
+
+{uri_note}
 
 ### MCP tools (preferred when available)
 

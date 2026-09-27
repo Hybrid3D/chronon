@@ -17,6 +17,12 @@ one registered vault name so ``chronon`` commands there resolve it without a
 without a flag from inside the vault itself. `chronon set-vault` writes it;
 `resolve_root` in `store.py` reads it as a fallback once directory discovery
 of an actual vault fails.
+
+A third, unrelated mechanism selects a vault inline in a resource reference
+itself: `chronon://<vault>/<path>`, parsed by `split_vault_uri` below. Unlike
+the previous two, this is not a file — it lets one string carry both the vault
+and the path, so pointing another agent (or a document, or a chat message) at
+one managed file does not require separately naming `--vault`/`vault=`.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from .errors import FileError, InvalidArgument
 from .lock import exclusive_file_lock
@@ -36,6 +43,8 @@ from .lock import exclusive_file_lock
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 WORKSPACE_FILE = ".chronon-workspace"
+URI_SCHEME = "chronon"
+URI_PREFIX = f"{URI_SCHEME}://"
 
 
 def config_home() -> Path:
@@ -272,3 +281,39 @@ def unset_vault(directory: str | Path = ".") -> dict[str, Any]:
     except OSError as exc:
         raise FileError("cannot remove workspace vault pin", path=str(path)) from exc
     return {"path": str(path), "removed": True}
+
+
+def split_vault_uri(resource: str, vault: str | None = None) -> tuple[str | None, str]:
+    """Split a `chronon://<vault>/<path>` reference into `(vault, path)`.
+
+    A resource that does not start with `chronon://` passes through unchanged,
+    paired with `vault` as given. This lets a single string carry its own
+    vault selector — handy for pointing at one managed file from outside any
+    chronon-aware context ("read chronon://notes/apartment.md") without
+    separately naming `--vault`/`vault=`. Conflicts with an explicitly passed
+    `vault` raise rather than silently picking one.
+    """
+    if not resource.startswith(URI_PREFIX):
+        return vault, resource
+    parsed = urlsplit(resource)
+    if parsed.query or parsed.fragment:
+        raise InvalidArgument(
+            "chronon:// URI must not include a query or fragment", uri=resource
+        )
+    path = unquote(parsed.path).lstrip("/")
+    if not path:
+        raise InvalidArgument(
+            "chronon:// URI must include a resource path",
+            uri=resource,
+            hint="expected chronon://<vault>/<path>",
+        )
+    uri_vault = unquote(parsed.netloc) or None
+    if uri_vault is not None:
+        _validate_name(uri_vault)
+        if vault is not None and vault != uri_vault:
+            raise InvalidArgument(
+                "chronon:// URI vault conflicts with an explicitly given vault",
+                uri_vault=uri_vault,
+                vault=vault,
+            )
+    return uri_vault or vault, path

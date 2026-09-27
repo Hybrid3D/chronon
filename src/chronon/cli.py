@@ -484,7 +484,7 @@ def unset_vault_command(
 
 @app.command()
 def add(
-    resources: list[Path] = typer.Argument(..., help="Files to begin tracking."),
+    resources: list[str] = typer.Argument(..., help="Files to begin tracking."),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
@@ -500,7 +500,7 @@ def add(
 
 @app.command()
 def commit(
-    resource: Path,
+    resource: str,
     message: str = typer.Option(..., "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
@@ -516,8 +516,8 @@ def commit(
 
 @app.command("mv")
 def move_command(
-    source: Path,
-    destination: Path,
+    source: str,
+    destination: str,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Rename a tracked file, keeping its full history and id."""
@@ -532,8 +532,8 @@ app.command("move", hidden=True)(move_command)
 
 @app.command("cp")
 def copy_command(
-    source: Path,
-    destination: Path,
+    source: str,
+    destination: str,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Copy a tracked file to a new path as a fresh resource.
@@ -552,7 +552,7 @@ app.command("copy", hidden=True)(copy_command)
 
 @app.command("diff")
 def diff_command(
-    resource: Path,
+    resource: str,
     from_ref: str = typer.Option("latest", "--from"),
     to_ref: str = typer.Option("working", "--to"),
     format: str = typer.Option("auto", "--format"),
@@ -567,7 +567,7 @@ def diff_command(
 
 
 def _history(
-    resource: Path,
+    resource: str,
     limit: int | None,
     since: str | None,
     until: str | None,
@@ -585,7 +585,7 @@ def _history(
 
 @app.command("log")
 def log_command(
-    resource: Path,
+    resource: str,
     limit: int | None = typer.Option(None, "--limit", "-n"),
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
@@ -597,7 +597,7 @@ def log_command(
 
 @app.command("history", hidden=True)
 def history_command(
-    resource: Path,
+    resource: str,
     limit: int | None = typer.Option(None, "--limit", "-n"),
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
@@ -609,7 +609,7 @@ def history_command(
 
 @app.command()
 def status(
-    resource: Path | None = typer.Argument(None),
+    resource: str | None = typer.Argument(None),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
@@ -631,7 +631,7 @@ def list_command(
 
 @app.command("read")
 def read_command(
-    resource: Path,
+    resource: str,
     at: str = typer.Option("working", "--at"),
     parsed: bool = typer.Option(False, "--parsed"),
     json_output: bool = typer.Option(False, "--json"),
@@ -648,7 +648,7 @@ def read_command(
 
 
 def _list_directory(
-    directory: Path,
+    directory: str,
     long_output: bool,
     json_output: bool,
 ) -> None:
@@ -673,7 +673,7 @@ LONG_OUTPUT_OPTION = typer.Option(
 
 @app.command("ls")
 def ls_command(
-    directory: Path = typer.Argument(Path("."), help="Directory to list."),
+    directory: str = typer.Argument(".", help="Directory to list."),
     long_output: bool = LONG_OUTPUT_OPTION,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -683,7 +683,7 @@ def ls_command(
 
 @app.command("show")
 def show_command(
-    resource: Path,
+    resource: str,
     revision: str,
     parsed: bool = typer.Option(False, "--parsed"),
     json_output: bool = typer.Option(False, "--json"),
@@ -701,7 +701,7 @@ def show_command(
 
 @app.command()
 def write(
-    resource: Path,
+    resource: str,
     content: str | None = typer.Option(None, "--content"),
     file: Path | None = typer.Option(None, "--file"),
     stdin: bool = typer.Option(False, "--stdin"),
@@ -743,7 +743,7 @@ def write(
 
 @app.command("set")
 def set_command(
-    resource: Path,
+    resource: str,
     path: str = typer.Option(..., "--path"),
     value: str = typer.Option(..., "--value"),
     type_name: str | None = typer.Option(None, "--type"),
@@ -762,7 +762,7 @@ def set_command(
 
 @app.command("unset")
 def unset_command(
-    resource: Path,
+    resource: str,
     path: str = typer.Option(..., "--path"),
     message: str | None = typer.Option(None, "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
@@ -779,7 +779,7 @@ def unset_command(
 
 @app.command("path-history")
 def path_history_command(
-    resource: Path,
+    resource: str,
     path: str,
     since: str | None = typer.Option(None, "--since"),
     until: str | None = typer.Option(None, "--until"),
@@ -795,7 +795,7 @@ def path_history_command(
 
 @app.command()
 def rollback(
-    resource: Path,
+    resource: str,
     revision: str,
     message: str = typer.Option(..., "--message", "-m"),
     author: str | None = typer.Option(None, "--author"),
@@ -812,7 +812,7 @@ def rollback(
 
 @app.command()
 def discard(
-    resource: Path,
+    resource: str,
     force: bool = typer.Option(False, "--force"),
     expected_revision: str | None = typer.Option(None, "--if-match"),
     json_output: bool = typer.Option(False, "--json"),
@@ -827,7 +827,7 @@ def discard(
 
 @app.command("accept")
 def accept_command(
-    resource: Path,
+    resource: str,
     expected_revision: str | None = typer.Option(None, "--if-match"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -841,7 +841,7 @@ def accept_command(
 
 @app.command()
 def validate(
-    resource: Path,
+    resource: str,
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     _run(
@@ -852,7 +852,7 @@ def validate(
 
 @app.command("schema-register")
 def schema_register(
-    resource: Path,
+    resource: str,
     file: Path = typer.Option(..., "--file"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:

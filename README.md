@@ -44,6 +44,10 @@ chronon -v knowledge read first-note.md
 chronon -v knowledge log first-note.md
 ```
 
+A `chronon://<vault>/<path>` URI names the same file without `-v`/`--vault`:
+`chronon read chronon://knowledge/first-note.md` — handy for pointing at one
+file from anywhere, including in a message to someone else.
+
 Editing, diffs, and recovery are covered in the [CLI guide](https://github.com/Hybrid3D/chronon/blob/main/docs/cli.md).
 
 ### Let an agent use it

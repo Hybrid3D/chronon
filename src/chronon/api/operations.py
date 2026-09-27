@@ -262,7 +262,63 @@ class ChrononRepository:
     def __init__(
         self, root: str | Path | None = None, vault: str | None = None
     ) -> None:
-        self.store = Store(root, vault=vault)
+        self._root = root
+        self._vault = vault
+        self._store: Store | None = None
+
+    @property
+    def store(self) -> Store:
+        """The active `Store`, built lazily.
+
+        A `chronon://` resource URI must get a chance to pick (or override) the
+        vault *before* a `Store` is ever constructed — otherwise a workspace with
+        no cwd-discoverable vault and no `--vault`/`vault=` would fail to resolve
+        before `_select`/`_select_pair` can read the resource. Every method that
+        takes a resource calls one of those first, so by the time this property
+        is read, `_vault` (and thus the root this resolves to) is already final.
+        """
+        if self._store is None:
+            self._store = Store(self._root, vault=self._vault)
+        return self._store
+
+    def _select(self, resource: str | Path) -> str:
+        """Strip a `chronon://<vault>/<path>` URI's vault from `resource`.
+
+        Switches this repository to that vault when it differs from the one
+        currently in use, so a resource reference can carry its own vault inline
+        instead of requiring a separate `vault=`/`--vault`. Returns the plain
+        resource path either way. Callers must assign the result before reading
+        `self.store` — `self.store.method(self._select(x))` would evaluate
+        `self.store` first and defeat this.
+        """
+        from chronon.core.vaults import split_vault_uri
+
+        text = resource if isinstance(resource, str) else str(resource)
+        vault, plain = split_vault_uri(text, self._vault)
+        if self._store is None or vault != self._vault:
+            self._vault = vault
+            self._store = Store(self._root, vault=vault)
+        return plain
+
+    def _select_pair(
+        self, source: str | Path, destination: str | Path
+    ) -> tuple[str, str]:
+        """Like `_select`, but for a source/destination pair that must agree on
+        one vault — `move`/`copy` cannot cross vaults, so a conflicting URI on
+        either side raises rather than silently picking one.
+        """
+        from chronon.core.vaults import split_vault_uri
+
+        source_text = source if isinstance(source, str) else str(source)
+        destination_text = (
+            destination if isinstance(destination, str) else str(destination)
+        )
+        vault, source_plain = split_vault_uri(source_text, self._vault)
+        vault, destination_plain = split_vault_uri(destination_text, vault)
+        if self._store is None or vault != self._vault:
+            self._vault = vault
+            self._store = Store(self._root, vault=vault)
+        return source_plain, destination_plain
 
     @property
     def root(self) -> Path:
@@ -351,6 +407,7 @@ class ChrononRepository:
         return result
 
     def add(self, resource: str | Path) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.normalize_resource(resource)
         content = self._working_content(relative)
         self._validate(relative, content)
@@ -360,6 +417,7 @@ class ChrononRepository:
         return result
 
     def status(self, resource: str | Path) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         result = resource_state(self.store, relative)
         if result["state"] == "missing":
@@ -397,6 +455,7 @@ class ChrononRepository:
         Directories are virtual entries: they are included when at least one tracked
         resource exists below them, even though Chronon itself tracks only files.
         """
+        directory = self._select(directory)
         relative_directory = self.store.normalize_directory(directory)
         directory_parts = (
             () if relative_directory == "." else tuple(Path(relative_directory).parts)
@@ -528,6 +587,7 @@ class ChrononRepository:
         The path change is appended to the descriptor's ``path_log`` so
         ``chronon diff`` can report the rename between two points in time.
         """
+        source, destination = self._select_pair(source, destination)
         origin = self.store.require_tracked(source)
         target = self.store.normalize_resource(destination)
         if origin == target:
@@ -593,6 +653,7 @@ class ChrononRepository:
         the source's id and the exact source revision the bytes came from, so
         the lineage is recoverable without linking the two histories.
         """
+        source, destination = self._select_pair(source, destination)
         origin = self.store.require_tracked(source)
         target = self.store.normalize_resource(destination)
         if origin == target:
@@ -673,6 +734,7 @@ class ChrononRepository:
         author: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         if not message.strip():
             raise InvalidArgument("commit message must not be empty", resource=relative)
@@ -727,6 +789,7 @@ class ChrononRepository:
     def read(
         self, resource: str | Path, at: str | int = "working", format: str = "raw"
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         content, commit = self._content_at(relative, at)
         if format not in {"raw", "parsed"}:
@@ -751,6 +814,7 @@ class ChrononRepository:
         to_ref: str | int = "working",
         format: str = "auto",
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         commits = read_index(self.store, relative)
         if not commits and str(from_ref) == "latest":
@@ -801,6 +865,7 @@ class ChrononRepository:
         until: str | None = None,
         author: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         commits = read_index(self.store, relative)
         since_time = parse_time_filter(since)
@@ -834,6 +899,7 @@ class ChrononRepository:
         author: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             return self._write_current(
@@ -881,6 +947,7 @@ class ChrononRepository:
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """Create a tracked resource or update one that is already tracked."""
+        resource = self._select(resource)
         relative = self.store.normalize_resource(resource)
         with resource_operation_lock(self.store, relative):
             if self.store.is_tracked(relative):
@@ -937,6 +1004,7 @@ class ChrononRepository:
         force: bool = False,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
@@ -970,6 +1038,7 @@ class ChrononRepository:
         resource: str | Path,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
@@ -999,6 +1068,7 @@ class ChrononRepository:
         author: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         if not message.strip():
             raise InvalidArgument("commit message must not be empty", resource=relative)
@@ -1105,6 +1175,7 @@ class ChrononRepository:
         author: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
@@ -1129,6 +1200,7 @@ class ChrononRepository:
         author: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         with resource_operation_lock(self.store, relative):
             status = resource_state(self.store, relative)
@@ -1150,6 +1222,7 @@ class ChrononRepository:
         since: str | None = None,
         until: str | None = None,
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         since_time = parse_time_filter(since)
         until_time = parse_time_filter(until)
@@ -1195,6 +1268,7 @@ class ChrononRepository:
         return {"resource": relative, "path": path, "events": events}
 
     def validate(self, resource: str | Path) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         content = self._working_content(relative)
         issues = validate_content(content, relative, self._schema(relative))
@@ -1207,6 +1281,7 @@ class ChrononRepository:
     def register_schema(
         self, resource: str | Path, schema: dict[str, Any]
     ) -> dict[str, Any]:
+        resource = self._select(resource)
         relative = self.store.require_tracked(resource)
         if not isinstance(schema, dict):
             raise FileError("schema must be a JSON object", resource=relative)

@@ -453,8 +453,10 @@ def test_repository_resolves_root_via_vault(tmp_path: Path, monkeypatch) -> None
 
 
 def test_repository_unknown_vault_raises(tmp_path: Path) -> None:
+    # Construction is lazy (a chronon:// resource URI may still supply a valid
+    # vault before anything is resolved), so the failure surfaces on first use.
     with pytest.raises(ChrononError):
-        ChrononRepository(vault="nope")
+        ChrononRepository(vault="nope").store
 
 
 # ── CLI: `chronon add-vault` / `list-vaults` / `remove-vault` ──────────────
@@ -649,3 +651,171 @@ def test_cli_status_accepts_vault_after_command(tmp_path: Path, monkeypatch) -> 
     result = runner.invoke(app, ["status", "--vault", "mine", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["resources"] == []
+
+
+# ── core/vaults.py: split_vault_uri (chronon://<vault>/<path>) ─────────────
+
+
+def test_split_vault_uri_passes_plain_resources_through() -> None:
+    assert vaults.split_vault_uri("notes.md") == (None, "notes.md")
+    assert vaults.split_vault_uri("sub/notes.md", "mine") == ("mine", "sub/notes.md")
+
+
+def test_split_vault_uri_extracts_vault_and_path() -> None:
+    assert vaults.split_vault_uri("chronon://notes/apartment.md") == (
+        "notes",
+        "apartment.md",
+    )
+    assert vaults.split_vault_uri("chronon://notes/sub/dir/apartment.md") == (
+        "notes",
+        "sub/dir/apartment.md",
+    )
+
+
+def test_split_vault_uri_decodes_percent_encoded_path() -> None:
+    assert vaults.split_vault_uri("chronon://notes/a%20b.md") == ("notes", "a b.md")
+
+
+def test_split_vault_uri_without_a_vault_keeps_the_explicit_one() -> None:
+    assert vaults.split_vault_uri("chronon:///apartment.md", "mine") == (
+        "mine",
+        "apartment.md",
+    )
+    assert vaults.split_vault_uri("chronon:///apartment.md") == (None, "apartment.md")
+
+
+def test_split_vault_uri_requires_a_resource_path() -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.split_vault_uri("chronon://notes")
+
+
+def test_split_vault_uri_rejects_query_or_fragment() -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.split_vault_uri("chronon://notes/a.md?x=1")
+    with pytest.raises(InvalidArgument):
+        vaults.split_vault_uri("chronon://notes/a.md#frag")
+
+
+def test_split_vault_uri_rejects_invalid_vault_name() -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.split_vault_uri("chronon://has space/a.md")
+
+
+def test_split_vault_uri_conflicting_vault_raises() -> None:
+    with pytest.raises(InvalidArgument):
+        vaults.split_vault_uri("chronon://notes/a.md", "other")
+
+
+def test_split_vault_uri_matching_explicit_vault_is_not_a_conflict() -> None:
+    assert vaults.split_vault_uri("chronon://notes/a.md", "notes") == (
+        "notes",
+        "a.md",
+    )
+
+
+# ── ChrononRepository resolves chronon:// URIs, even with no cwd vault ─────
+
+
+def test_repository_resolves_vault_from_resource_uri(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No --vault, no cwd vault, no workspace pin: only the URI names one."""
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    repo = ChrononRepository()
+    added = repo.add("chronon://mine/docs.yml")
+    assert added["resource"] == "docs.yml"
+    assert repo.root == root.resolve()
+
+
+def test_repository_construction_does_not_eagerly_resolve(tmp_path: Path) -> None:
+    """Construction is lazy so a later chronon:// URI can still supply a vault."""
+    repo = ChrononRepository(vault="does-not-exist-yet")
+    # no exception yet: nothing has tried to resolve a Store
+
+
+def test_repository_uri_vault_conflicts_with_constructor_vault(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    vaults.add_vault("other", root)
+
+    repo = ChrononRepository(vault="other")
+    with pytest.raises(InvalidArgument):
+        repo.status("chronon://mine/docs.yml")
+
+
+def test_repository_move_copy_reject_cross_vault_uris(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    vaults.add_vault("other", root)
+    (root / "a.yml").write_text("value: 1\n", encoding="utf-8")
+
+    repo = ChrononRepository()
+    repo.add("chronon://mine/a.yml")
+    with pytest.raises(InvalidArgument):
+        repo.move("chronon://mine/a.yml", "chronon://other/b.yml")
+
+
+def test_repository_move_within_same_uri_vault_succeeds(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    init_repository(root)
+    vaults.add_vault("mine", root)
+    (root / "a.yml").write_text("value: 1\n", encoding="utf-8")
+
+    repo = ChrononRepository()
+    repo.add("chronon://mine/a.yml")
+    moved = repo.move("chronon://mine/a.yml", "chronon://mine/b.yml")
+    assert moved["from"] == "a.yml"
+    assert moved["to"] == "b.yml"
+
+
+# ── CLI: `chronon <command> chronon://<vault>/<path>` ──────────────────────
+
+
+def test_cli_add_via_chronon_uri_with_no_vault_flag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "proj"
+    assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
+    (root / "docs.yml").write_text("value: 1\n", encoding="utf-8")
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(app, ["add", "chronon://mine/docs.yml", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["resources"][0]["resource"] == "docs.yml"
+
+    status = runner.invoke(app, ["status", "chronon://mine/docs.yml", "--json"])
+    assert status.exit_code == 0, status.output
+    assert json.loads(status.output)["resource"] == "docs.yml"
+
+
+def test_cli_chronon_uri_conflicting_with_vault_flag_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "proj"
+    assert runner.invoke(app, ["init", str(root), "--register", "mine"]).exit_code == 0
+    assert runner.invoke(app, ["init", str(tmp_path / "other"), "--register", "other"]).exit_code == 0
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(
+        app, ["--vault", "other", "status", "chronon://mine/docs.yml", "--json"]
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.output)["error"] == "invalid_argument"
