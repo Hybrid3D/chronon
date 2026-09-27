@@ -456,7 +456,7 @@ def test_repository_unknown_vault_raises(tmp_path: Path) -> None:
     # Construction is lazy (a chronon:// resource URI may still supply a valid
     # vault before anything is resolved), so the failure surfaces on first use.
     with pytest.raises(ChrononError):
-        ChrononRepository(vault="nope").store
+        _ = ChrononRepository(vault="nope").store
 
 
 # ── CLI: `chronon add-vault` / `list-vaults` / `remove-vault` ──────────────
@@ -737,7 +737,7 @@ def test_repository_resolves_vault_from_resource_uri(
 
 def test_repository_construction_does_not_eagerly_resolve(tmp_path: Path) -> None:
     """Construction is lazy so a later chronon:// URI can still supply a vault."""
-    repo = ChrononRepository(vault="does-not-exist-yet")
+    ChrononRepository(vault="does-not-exist-yet")
     # no exception yet: nothing has tried to resolve a Store
 
 
